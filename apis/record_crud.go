@@ -294,7 +294,10 @@ func recordCreate(responseWriteAfterTx bool, optFinalizer func(data any) error) 
 				k = inflector.Columnify(k) // columnify is just as extra measure in case of custom fields
 				param = "__pb_create__" + k
 				dummyParams[param] = v
-				selects = append(selects, "{:"+param+"} AS [["+k+"]]")
+				// note: the cast is required because Postgres cannot infer the
+				// type of a bare parameter in a select target list, which would
+				// leave the dummy CTE columns untyped for the rule comparisons
+				selects = append(selects, "{:"+param+"}::"+dummyColumnCastType(e.App, collection, k)+" AS [["+k+"]]")
 			}
 
 			// shallow clone the current collection
@@ -763,4 +766,34 @@ func hasAuthManageAccess(app core.App, requestInfo *core.RequestInfo, collection
 	err = query.Limit(1).Row(&exists)
 
 	return err == nil && exists > 0
+}
+
+// dummyColumnCastType returns the Postgres type that the create/manage rule
+// dummy CTE should cast a field parameter to.
+//
+// It is derived from the field column definition so that it stays in sync with
+// the real record table.
+func dummyColumnCastType(app core.App, collection *core.Collection, fieldName string) string {
+	field := collection.Fields.GetByName(fieldName)
+	if field == nil {
+		return "text"
+	}
+
+	colType := field.ColumnType(app)
+
+	// strip everything after the type itself (defaults, constraints, etc.)
+	upper := strings.ToUpper(colType)
+	cut := len(colType)
+	for _, kw := range []string{" DEFAULT", " PRIMARY", " NOT NULL", " UNIQUE"} {
+		if i := strings.Index(upper, kw); i >= 0 && i < cut {
+			cut = i
+		}
+	}
+
+	colType = strings.TrimSpace(colType[:cut])
+	if colType == "" {
+		return "text"
+	}
+
+	return colType
 }

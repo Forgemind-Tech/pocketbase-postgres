@@ -22,8 +22,10 @@ import (
 // NB! Be aware that this method is vulnerable to SQL injection and the
 // "dangerousViewName" argument must come only from trusted input!
 func (app *BaseApp) DeleteView(dangerousViewName string) error {
+	// note: CASCADE because Postgres refuses to drop a view that other views
+	// depend on, whereas SQLite dropped it regardless
 	_, err := app.DB().NewQuery(fmt.Sprintf(
-		"DROP VIEW IF EXISTS {{%s}}",
+		"DROP VIEW IF EXISTS {{%s}} CASCADE",
 		dangerousViewName,
 	)).Execute()
 
@@ -51,7 +53,8 @@ func (app *BaseApp) SaveView(dangerousViewName string, dangerousSelectQuery stri
 		//
 		// note: the query is wrapped in a secondary SELECT as a rudimentary
 		// measure to discourage multiple inline sql statements execution
-		viewQuery := fmt.Sprintf("CREATE VIEW {{%s}} AS SELECT * FROM (%s)", dangerousViewName, dangerousSelectQuery)
+		// note: Postgres requires an alias for the wrapping subquery
+		viewQuery := fmt.Sprintf("CREATE VIEW {{%s}} AS SELECT * FROM (%s) AS pb_view_src", dangerousViewName, dangerousSelectQuery)
 		_, err = txApp.DB().NewQuery(viewQuery).Execute()
 		if err != nil {
 			return err
@@ -170,7 +173,8 @@ func (app *BaseApp) DryRunView(dangerousSelectQuery string, sampleSize int) (*Dr
 	err = app.RecordQuery(tempCollection).
 		// note: the query is wrapped in a secondary SELECT as a rudimentary
 		// measure to discourage multiple inline sql statements execution
-		From("(SELECT * FROM (" + dangerousSelectQuery + ")) as " + tempName).
+		// note: Postgres requires an alias for a subquery in FROM
+		From("(SELECT * FROM (" + dangerousSelectQuery + ") AS pb_dry_src) as " + tempName).
 		Limit(int64(sampleSize)).
 		All(&records)
 	if err != nil {
@@ -369,7 +373,9 @@ func parseQueryToFields(app App, selectQuery string) (map[string]*queryField, er
 			}
 			continue
 		}
-		if strings.HasPrefix(colLower, "total(") {
+		// note: SQLite's total() has no Postgres counterpart; sum() and avg()
+		// are the equivalent non-integer numeric aggregates
+		if strings.HasPrefix(colLower, "sum(") || strings.HasPrefix(colLower, "avg(") {
 			result[col.alias] = &queryField{
 				field: &NumberField{
 					Name: col.alias,

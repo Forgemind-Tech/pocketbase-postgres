@@ -113,35 +113,33 @@ func StubMFARecords(app core.App) error {
 }
 
 func StubLogsData(app *TestApp) error {
-	_, err := app.AuxDB().NewQuery(`
-		delete from {{_logs}};
-
-		insert into {{_logs}} (
-			[[id]],
-			[[level]],
-			[[message]],
-			[[data]],
-			[[created]],
-			[[updated]]
-		)
-		values
-		(
-			"873f2133-9f38-44fb-bf82-c8f53b310d91",
+	// note: the statements run one by one because the pgx extended protocol
+	// rejects multiple commands in a single query
+	stmts := []string{
+		`DELETE FROM {{_logs}}`,
+		`INSERT INTO {{_logs}} ([[id]], [[level]], [[message]], [[data]], [[created]])
+		VALUES (
+			'873f2133-9f38-44fb-bf82-c8f53b310d91',
 			0,
-			"test_message1",
+			'test_message1',
 			'{"status":200}',
-			"2022-05-01 10:00:00.123Z",
-			"2022-05-01 10:00:00.123Z"
-		),
-		(
-			"f2133873-44fb-9f38-bf82-c918f53b310d",
+			'2022-05-01 10:00:00.123Z'
+		)`,
+		`INSERT INTO {{_logs}} ([[id]], [[level]], [[message]], [[data]], [[created]])
+		VALUES (
+			'f2133873-44fb-9f38-bf82-c918f53b310d',
 			8,
-			"test_message2",
+			'test_message2',
 			'{"status":400}',
-			"2022-05-02 10:00:00.123Z",
-			"2022-05-02 10:00:00.123Z"
-		);
-	`).Execute()
+			'2022-05-02 10:00:00.123Z'
+		)`,
+	}
 
-	return err
+	for _, stmt := range stmts {
+		if _, err := app.AuxDB().NewQuery(stmt).Execute(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

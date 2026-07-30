@@ -9,7 +9,7 @@ import (
 func TestJSONEach(t *testing.T) {
 	result := dbutils.JSONEach("a.b")
 
-	expected := "json_each(CASE WHEN iif(json_valid([[a.b]]), json_type([[a.b]])='array', FALSE) THEN [[a.b]] ELSE json_array([[a.b]]) END)"
+	expected := "jsonb_array_elements_text(CASE WHEN [[a.b]]::text IS JSON ARRAY THEN [[a.b]]::jsonb ELSE jsonb_build_array([[a.b]]) END)"
 
 	if result != expected {
 		t.Fatalf("Expected\n%v\ngot\n%v", expected, result)
@@ -19,7 +19,7 @@ func TestJSONEach(t *testing.T) {
 func TestJSONArrayLength(t *testing.T) {
 	result := dbutils.JSONArrayLength("a.b")
 
-	expected := "json_array_length(CASE WHEN iif(json_valid([[a.b]]), json_type([[a.b]])='array', FALSE) THEN [[a.b]] ELSE (CASE WHEN [[a.b]] = '' OR [[a.b]] IS NULL THEN json_array() ELSE json_array([[a.b]]) END) END)"
+	expected := "jsonb_array_length(CASE WHEN [[a.b]]::text IS JSON ARRAY THEN [[a.b]]::jsonb WHEN [[a.b]] IS NULL OR [[a.b]]::text = '' THEN '[]'::jsonb ELSE jsonb_build_array([[a.b]]) END)"
 
 	if result != expected {
 		t.Fatalf("Expected\n%v\ngot\n%v", expected, result)
@@ -37,19 +37,19 @@ func TestJSONExtract(t *testing.T) {
 			"empty path",
 			"a.b",
 			"",
-			"(CASE WHEN json_valid([[a.b]]) THEN JSON_EXTRACT([[a.b]], '$') ELSE JSON_EXTRACT(json_object('pb', [[a.b]]), '$.pb') END)",
+			`(CASE WHEN [[a.b]]::text IS JSON THEN ([[a.b]]::jsonb #>> '{}') ELSE (to_jsonb([[a.b]]) #>> '{}') END)`,
 		},
 		{
 			"starting with array index",
 			"a.b",
 			"[1].a[2]",
-			"(CASE WHEN json_valid([[a.b]]) THEN JSON_EXTRACT([[a.b]], '$[1].a[2]') ELSE JSON_EXTRACT(json_object('pb', [[a.b]]), '$.pb[1].a[2]') END)",
+			`(CASE WHEN [[a.b]]::text IS JSON THEN ([[a.b]]::jsonb #>> '{"1","a","2"}') ELSE (to_jsonb([[a.b]]) #>> '{"1","a","2"}') END)`,
 		},
 		{
 			"starting with key",
 			"a.b",
 			"a.b[2].c",
-			"(CASE WHEN json_valid([[a.b]]) THEN JSON_EXTRACT([[a.b]], '$.a.b[2].c') ELSE JSON_EXTRACT(json_object('pb', [[a.b]]), '$.pb.a.b[2].c') END)",
+			`(CASE WHEN [[a.b]]::text IS JSON THEN ([[a.b]]::jsonb #>> '{"a","b","2","c"}') ELSE (to_jsonb([[a.b]]) #>> '{"a","b","2","c"}') END)`,
 		},
 	}
 

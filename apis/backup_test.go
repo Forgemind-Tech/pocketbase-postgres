@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -17,6 +18,8 @@ import (
 )
 
 func TestBackupsList(t *testing.T) {
+	requirePgTools(t)
+
 	t.Parallel()
 
 	scenarios := []tests.ApiScenario{
@@ -88,6 +91,8 @@ func TestBackupsList(t *testing.T) {
 }
 
 func TestBackupsCreate(t *testing.T) {
+	requirePgTools(t)
+
 	t.Parallel()
 
 	scenarios := []tests.ApiScenario{
@@ -216,6 +221,8 @@ func TestBackupsCreate(t *testing.T) {
 }
 
 func TestBackupUpload(t *testing.T) {
+	requirePgTools(t)
+
 	t.Parallel()
 
 	// create dummy form data bodies
@@ -368,6 +375,8 @@ func TestBackupUpload(t *testing.T) {
 }
 
 func TestBackupsDownload(t *testing.T) {
+	requirePgTools(t)
+
 	t.Parallel()
 
 	scenarios := []tests.ApiScenario{
@@ -588,6 +597,8 @@ func TestBackupsDownload(t *testing.T) {
 }
 
 func TestBackupsDelete(t *testing.T) {
+	requirePgTools(t)
+
 	t.Parallel()
 
 	noTestBackupFilesChanges := func(t testing.TB, app *tests.TestApp) {
@@ -756,6 +767,8 @@ func TestBackupsDelete(t *testing.T) {
 }
 
 func TestBackupsRestore(t *testing.T) {
+	requirePgTools(t)
+
 	t.Parallel()
 
 	scenarios := []tests.ApiScenario{
@@ -871,5 +884,18 @@ func ensureNoBackups(t testing.TB, app *tests.TestApp) {
 
 	if total := len(files); total != 0 {
 		t.Fatalf("Expected 0 backup files, got %d", total)
+	}
+}
+
+// requirePgTools skips the test when the Postgres client binaries that the
+// backup/restore implementation shells out to are not installed.
+func requirePgTools(t *testing.T) {
+	t.Helper()
+
+	for _, argv := range [][]string{core.PgDumpCommand(), core.PgRestoreCommand()} {
+		bin := argv[0]
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s is not available in PATH - skipping the backup test", bin)
+		}
 	}
 }

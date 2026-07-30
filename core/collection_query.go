@@ -38,7 +38,9 @@ func (app *BaseApp) FindAllCollections(collectionTypes ...string) ([]*Collection
 		q.AndWhere(dbx.In("type", list.ToInterfaceSlice(types)...))
 	}
 
-	err := q.OrderBy("rowid ASC").All(&collections)
+	// note: Postgres has no rowid, so insertion order is approximated with
+	// the creation timestamp and the id is used as a tiebreaker for stability
+	err := q.OrderBy("created ASC", "id ASC").All(&collections)
 	if err != nil {
 		return nil, err
 	}
@@ -283,7 +285,8 @@ func normalizeViewQueryId(app App, query string) (string, error) {
 		}
 	}
 
-	query = fmt.Sprintf("SELECT %s FROM (%s)", strings.Join(columns, ","), query)
+	// note: Postgres requires an alias for a subquery in FROM
+	query = fmt.Sprintf("SELECT %s FROM (%s) AS pb_id_src", strings.Join(columns, ","), query)
 
 	return query, nil
 }

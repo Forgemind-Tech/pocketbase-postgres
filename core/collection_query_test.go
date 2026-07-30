@@ -23,7 +23,7 @@ func TestCollectionQuery(t *testing.T) {
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
-	expected := "SELECT {{_collections}}.* FROM `_collections`"
+	expected := `SELECT {{_collections}}.* FROM "_collections"`
 
 	sql := app.CollectionQuery().Build().SQL()
 	if sql != expected {
@@ -380,6 +380,21 @@ func TestFindCollectionTruncate(t *testing.T) {
 		return len(entries), err
 	}
 
+	// the file delete runs in a background goroutine, so poll instead of
+	// assuming it completed within a fixed delay
+	awaitFiles := func(collectionId string, expected int) (int, error) {
+		var total int
+		var err error
+		for i := 0; i < 100; i++ {
+			total, err = countFiles(collectionId)
+			if err != nil || total == expected {
+				return total, err
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		return total, err
+	}
+
 	t.Run("truncate view", func(t *testing.T) {
 		view2, err := app.FindCollectionByNameOrId("view2")
 		if err != nil {
@@ -456,7 +471,7 @@ func TestFindCollectionTruncate(t *testing.T) {
 			t.Fatalf("Expected all records to be deleted, got %v", total)
 		}
 
-		totalFiles, err := countFiles(demo5.Id)
+		totalFiles, err := awaitFiles(demo5.Id, 0)
 		if err != nil {
 			t.Fatal(err)
 		}

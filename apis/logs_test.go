@@ -76,6 +76,29 @@ func TestLogsList(t *testing.T) {
 			},
 			ExpectedEvents: map[string]int{"*": 0},
 		},
+		{
+			// the logs UI sorts by -@rowid by default, so the aux _logs table
+			// needs the same sequence column as the record tables
+			Name:   "authorized as superuser + @rowid sort",
+			Method: http.MethodGet,
+			URL:    "/api/logs?sort=-@rowid",
+			Headers: map[string]string{
+				"Authorization": "eyJhbGciOiJIUzI1NiJ9.eyJpZCI6InN5d2JoZWNuaDQ2cmhtMCIsInR5cGUiOiJhdXRoIiwiY29sbGVjdGlvbklkIjoicGJjXzMxNDI2MzU4MjMiLCJleHAiOjI1MjQ2MDQ0NjEsInJlZnJlc2hhYmxlIjp0cnVlfQ.UXgO3j-0BumcugrFjbd7j0M4MQvbrLggLlcu_YNGjoY",
+			},
+			BeforeTestFunc: func(t testing.TB, app *tests.TestApp, e *core.ServeEvent) {
+				if err := tests.StubLogsData(app); err != nil {
+					t.Fatal(err)
+				}
+			},
+			ExpectedStatus: 200,
+			ExpectedContent: []string{
+				`"totalItems":2`,
+				// inserted last, so it must come first when sorting by -@rowid
+				`"items":[{"id":"f2133873-44fb-9f38-bf82-c918f53b310d"`,
+				`"id":"873f2133-9f38-44fb-bf82-c8f53b310d91"`,
+			},
+			ExpectedEvents: map[string]int{"*": 0},
+		},
 	}
 
 	for _, scenario := range scenarios {

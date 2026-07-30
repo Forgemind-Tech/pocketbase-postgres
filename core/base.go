@@ -53,11 +53,16 @@ type FilesManager interface {
 }
 
 // DBConnectFunc defines a database connection initialization function.
-type DBConnectFunc func(dbPath string) (*dbx.DB, error)
+//
+// The dsn argument is a Postgres connection string.
+type DBConnectFunc func(dsn string) (*dbx.DB, error)
 
 // BaseAppConfig defines a BaseApp configuration option
 type BaseAppConfig struct {
 	DBConnect        DBConnectFunc
+	DBUrl            string
+	DataSchema       string // defaults to core.DataSchemaName
+	AuxSchema        string // defaults to core.AuxSchemaName
 	DataDir          string
 	EncryptionEnv    string
 	QueryTimeout     time.Duration
@@ -84,6 +89,13 @@ type BaseApp struct {
 	nonconcurrentDB     dbx.Builder
 	auxConcurrentDB     dbx.Builder
 	auxNonconcurrentDB  dbx.Builder
+
+	// dbUrlSource labels where the connection string came from (see ResolveDBUrl)
+	dbUrlSource string
+
+	// dbUrlErr holds a connection config error detected during NewBaseApp,
+	// which cannot fail, so that initDataDB can report it
+	dbUrlErr error
 
 	// app event hooks
 	onBootstrap     *hook.Hook[*BootstrapEvent]
@@ -208,6 +220,24 @@ func NewBaseApp(config BaseAppConfig) *BaseApp {
 	// apply config defaults
 	if app.config.DBConnect == nil {
 		app.config.DBConnect = DefaultDBConnect
+	}
+	// resolve the connection string (--dbUrl / PB_DB_URL / db.json / defaults)
+	//
+	// note: NewBaseApp cannot fail, so a malformed db.json is remembered and
+	// reported by initDataDB instead of being silently replaced with the
+	// defaults, which would quietly connect to the wrong database
+	dbUrl, dbUrlSource, err := ResolveDBUrl(app.config.DataDir, app.config.DBUrl)
+	if err != nil {
+		app.dbUrlErr = err
+	} else {
+		app.config.DBUrl = dbUrl
+		app.dbUrlSource = dbUrlSource
+	}
+	if app.config.DataSchema == "" {
+		app.config.DataSchema = DataSchemaName
+	}
+	if app.config.AuxSchema == "" {
+		app.config.AuxSchema = AuxSchemaName
 	}
 	if app.config.DataMaxOpenConns <= 0 {
 		app.config.DataMaxOpenConns = DefaultDataMaxOpenConns
@@ -427,6 +457,10 @@ func (app *BaseApp) Bootstrap() error {
 			return err
 		}
 
+		if err := app.validateViewCollections(); err != nil {
+			return err
+		}
+
 		// try to cleanup the pb_data temp directory (if any)
 		_ = os.RemoveAll(filepath.Join(app.DataDir(), LocalTempDirName))
 
@@ -481,7 +515,7 @@ func (app *BaseApp) ResetBootstrapState() error {
 
 // DB returns the default app data.db builder instance.
 //
-// To minimize SQLITE_BUSY errors, it automatically routes the
+// It automatically routes the
 // SELECT queries to the underlying concurrent db pool and everything
 // else to the nonconcurrent one.
 //
@@ -530,7 +564,7 @@ func (app *BaseApp) NonconcurrentDB() dbx.Builder {
 
 // AuxDB returns the app auxiliary.db builder instance.
 //
-// To minimize SQLITE_BUSY errors, it automatically routes the
+// It automatically routes the
 // SELECT queries to the underlying concurrent db pool and everything
 // else to the nonconcurrent one.
 //
@@ -580,6 +614,27 @@ func (app *BaseApp) AuxNonconcurrentDB() dbx.Builder {
 // DataDir returns the app data directory path.
 func (app *BaseApp) DataDir() string {
 	return app.config.DataDir
+}
+
+// DBUrl returns the Postgres connection string used by the app.
+func (app *BaseApp) DBUrl() string {
+	return app.config.DBUrl
+}
+
+// DBUrlSource returns a human readable label of where the connection string
+// came from (see [ResolveDBUrl]).
+func (app *BaseApp) DBUrlSource() string {
+	return app.dbUrlSource
+}
+
+// DataSchemaName returns the Postgres schema holding the collection/record tables.
+func (app *BaseApp) DataSchemaName() string {
+	return app.config.DataSchema
+}
+
+// AuxSchemaName returns the Postgres schema holding the auxiliary (logs) tables.
+func (app *BaseApp) AuxSchemaName() string {
+	return app.config.AuxSchema
 }
 
 // EncryptionEnv returns the name of the app secret env key
@@ -1173,9 +1228,16 @@ func (app *BaseApp) OnBatchRequest() *hook.Hook[*BatchRequestEvent] {
 // -------------------------------------------------------------------
 
 func (app *BaseApp) initDataDB() error {
-	dbPath := filepath.Join(app.DataDir(), "data.db")
+	if app.dbUrlErr != nil {
+		return app.dbUrlErr
+	}
 
-	concurrentDB, err := app.config.DBConnect(dbPath)
+	dsn, err := dsnWithSearchPath(app.config.DBUrl, app.config.DataSchema)
+	if err != nil {
+		return err
+	}
+
+	concurrentDB, err := app.config.DBConnect(dsn)
 	if err != nil {
 		return err
 	}
@@ -1183,7 +1245,13 @@ func (app *BaseApp) initDataDB() error {
 	concurrentDB.DB().SetMaxIdleConns(app.config.DataMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 
-	nonconcurrentDB, err := app.config.DBConnect(dbPath)
+	// dbx.Open is lazy, so without an explicit check the first failure would
+	// surface as an opaque dial error from somewhere inside the migrations
+	if err := concurrentDB.DB().Ping(); err != nil {
+		return app.newDBConnectionError(err)
+	}
+
+	nonconcurrentDB, err := app.config.DBConnect(dsn)
 	if err != nil {
 		return err
 	}
@@ -1233,11 +1301,12 @@ func normalizeSQLLog(sql string) string {
 }
 
 func (app *BaseApp) initAuxDB() error {
-	// note: renamed to "auxiliary" because "aux" is a reserved Windows filename
-	// (see https://github.com/pocketbase/pocketbase/issues/5607)
-	dbPath := filepath.Join(app.DataDir(), "auxiliary.db")
+	dsn, err := dsnWithSearchPath(app.config.DBUrl, app.config.AuxSchema)
+	if err != nil {
+		return err
+	}
 
-	concurrentDB, err := app.config.DBConnect(dbPath)
+	concurrentDB, err := app.config.DBConnect(dsn)
 	if err != nil {
 		return err
 	}
@@ -1245,7 +1314,14 @@ func (app *BaseApp) initAuxDB() error {
 	concurrentDB.DB().SetMaxIdleConns(app.config.AuxMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 
-	nonconcurrentDB, err := app.config.DBConnect(dbPath)
+	// the aux schema is not created by a migration since the migrations
+	// bookkeeping table itself lives inside it
+	_, err = concurrentDB.NewQuery(`CREATE SCHEMA IF NOT EXISTS "` + app.config.AuxSchema + `"`).Execute()
+	if err != nil {
+		return fmt.Errorf("failed to create the %s schema: %w", app.config.AuxSchema, err)
+	}
+
+	nonconcurrentDB, err := app.config.DBConnect(dsn)
 	if err != nil {
 		return err
 	}
@@ -1357,20 +1433,19 @@ func (app *BaseApp) registerBaseHooks() {
 		Priority: 999,
 	})
 
+	// note: Postgres has no WAL checkpoint or "PRAGMA optimize" equivalent to
+	// run here - autovacuum handles both the space reclamation and the planner
+	// statistics. A plain ANALYZE is still cheap and keeps the estimates fresh
+	// for write-heavy instances.
 	app.Cron().Add("__pbDBOptimize__", "0 0 * * *", func() {
-		_, execErr := app.NonconcurrentDB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute()
+		_, execErr := app.NonconcurrentDB().NewQuery("ANALYZE").Execute()
 		if execErr != nil {
-			app.Logger().Warn("Failed to run periodic PRAGMA wal_checkpoint for the main DB", slog.String("error", execErr.Error()))
+			app.Logger().Warn("Failed to run periodic ANALYZE for the main DB", slog.String("error", execErr.Error()))
 		}
 
-		_, execErr = app.AuxNonconcurrentDB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute()
+		_, execErr = app.AuxNonconcurrentDB().NewQuery("ANALYZE").Execute()
 		if execErr != nil {
-			app.Logger().Warn("Failed to run periodic PRAGMA wal_checkpoint for the auxiliary DB", slog.String("error", execErr.Error()))
-		}
-
-		_, execErr = app.NonconcurrentDB().NewQuery("PRAGMA optimize").Execute()
-		if execErr != nil {
-			app.Logger().Warn("Failed to run periodic PRAGMA optimize", slog.String("error", execErr.Error()))
+			app.Logger().Warn("Failed to run periodic ANALYZE for the auxiliary DB", slog.String("error", execErr.Error()))
 		}
 	})
 

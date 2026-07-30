@@ -895,9 +895,9 @@ func TestCollectionIndexHelpers(t *testing.T) {
 	c.AddIndex("idx3", false, "colA", "")
 	c.AddIndex("idx3", false, "colB", "") // should overwrite the previous one
 
-	idx1 := "CREATE INDEX `idx1` ON `test` (colA,colB) WHERE colA != 1"
-	idx2 := "CREATE UNIQUE INDEX `idx2` ON `test` (colA)"
-	idx3 := "CREATE INDEX `idx3` ON `test` (colB)"
+	idx1 := `CREATE INDEX "idx1" ON "test" (colA,colB) WHERE colA != 1`
+	idx2 := `CREATE UNIQUE INDEX "idx2" ON "test" (colA)`
+	idx3 := `CREATE INDEX "idx3" ON "test" (colB)`
 
 	checkIndexes(t, c.Indexes, []string{idx1, idx2, idx3})
 
@@ -1579,74 +1579,74 @@ func TestCollectionSaveViewWrapping(t *testing.T) {
 	// note: some of the queries use "limit 0" because the tested field value could be empty
 	// which will trigger the extra sample records validation that are not important for this test
 	scenarios := []struct {
-		name     string
-		query    string
-		expected string
+		name           string
+		query          string
+		expectWrapping bool
 	}{
 		{
 			"no wrapping - id field",
 			"select id, bool from demo1",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select id, bool from demo1)",
+			false,
 		},
 		{
 			"no wrapping - text field",
 			"select text as id, bool from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select text as id, bool from demo1 limit 0)",
+			false,
 		},
 		{
 			"no wrapping - relation field",
 			"select rel_one as id, bool from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select rel_one as id, bool from demo1 limit 0)",
+			false,
 		},
 		{
-			"no wrapping - select field",
+			"wrapping - select field (jsonb column)",
 			"select select_many as id, bool from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select select_many as id, bool from demo1 limit 0)",
+			true, // select_many is jsonb in Postgres, so the id cast is required
 		},
 		{
 			"no wrapping - email field",
 			"select email as id, bool from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select email as id, bool from demo1 limit 0)",
+			false,
 		},
 		{
 			"no wrapping - datetime field",
 			"select datetime as id, bool from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select datetime as id, bool from demo1 limit 0)",
+			false,
 		},
 		{
 			"no wrapping - url field",
 			"select url as id, bool from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select url as id, bool from demo1 limit 0)",
+			false,
 		},
 		{
 			"wrapping - bool field",
 			"select bool as id, text as txt, url from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (SELECT CAST(`id` as TEXT) `id`,`txt`,`url` FROM (select bool as id, text as txt, url from demo1 limit 0))",
+			true,
 		},
 		{
 			"wrapping - bool field (different order)",
 			"select text as txt, url, bool as id from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (SELECT `txt`,`url`,CAST(`id` as TEXT) `id` FROM (select text as txt, url, bool as id from demo1 limit 0))",
+			true,
 		},
 		{
 			"wrapping - json field",
 			"select json as id, text, url from demo1 limit 0",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (SELECT CAST(`id` as TEXT) `id`,`text`,`url` FROM (select json as id, text, url from demo1 limit 0))",
+			true,
 		},
 		{
 			"wrapping - numeric id",
 			"select 1 as id",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (SELECT CAST(`id` as TEXT) `id` FROM (select 1 as id))",
+			true,
 		},
 		{
-			"wrapping - expresion",
+			"no wrapping - expression",
 			"select ('test') as id",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (SELECT CAST(`id` as TEXT) `id` FROM (select ('test') as id))",
+			false, // Postgres infers the expression as text
 		},
 		{
 			"no wrapping - cast as text",
 			"select cast('test' as text) as id",
-			"CREATE VIEW `test_wrapping` AS SELECT * FROM (select cast('test' as text) as id)",
+			false,
 		},
 	}
 
@@ -1665,15 +1665,27 @@ func TestCollectionSaveViewWrapping(t *testing.T) {
 
 			var sql string
 
-			rowErr := app.ConcurrentDB().NewQuery("SELECT sql FROM sqlite_master WHERE type='view' AND name={:name}").
+			// note: Postgres stores a parsed tree rather than the original text,
+			// so the regenerated definition is checked for the id cast that the
+			// wrapping introduces instead of matching the raw query verbatim
+			rowErr := app.ConcurrentDB().NewQuery(`
+				SELECT pg_get_viewdef(c.oid)
+				FROM pg_class c
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				WHERE n.nspname = current_schema() AND c.relkind = 'v' AND c.relname = {:name}
+			`).
 				Bind(dbx.Params{"name": viewName}).
 				Row(&sql)
 			if rowErr != nil {
 				t.Fatalf("Failed to retrieve view sql: %v", rowErr)
 			}
 
-			if sql != s.expected {
-				t.Fatalf("Expected query \n%v, \ngot \n%v", s.expected, sql)
+			// the wrapper subquery alias is an unambiguous marker - looking for
+			// a "::text as id" cast would also match a user supplied cast
+			hasIdCast := strings.Contains(sql, "pb_id_src")
+
+			if hasIdCast != s.expectWrapping {
+				t.Fatalf("Expected wrapping %v, got %v in:\n%v", s.expectWrapping, hasIdCast, sql)
 			}
 		})
 	}

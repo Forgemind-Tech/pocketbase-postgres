@@ -1,57 +1,107 @@
-<p align="center">
-    <a href="https://pocketbase.io" target="_blank" rel="noopener">
-        <img src="https://i.imgur.com/aCBbjKx.png" alt="PocketBase - open source backend in 1 file" />
-    </a>
-</p>
+# PocketBase on PostgreSQL
 
-<p align="center">
-    <a href="https://github.com/pocketbase/pocketbase/actions/workflows/release.yaml" target="_blank" rel="noopener"><img src="https://github.com/pocketbase/pocketbase/actions/workflows/release.yaml/badge.svg" alt="build" /></a>
-    <a href="https://github.com/pocketbase/pocketbase/releases" target="_blank" rel="noopener"><img src="https://img.shields.io/github/release/pocketbase/pocketbase.svg" alt="Latest releases" /></a>
-    <a href="https://pkg.go.dev/github.com/pocketbase/pocketbase" target="_blank" rel="noopener"><img src="https://godoc.org/github.com/pocketbase/pocketbase?status.svg" alt="Go package documentation" /></a>
-</p>
+A fork of [PocketBase](https://pocketbase.io) with **SQLite replaced by PostgreSQL**.
 
-[PocketBase](https://pocketbase.io) is an open source Go backend that includes:
+There is no SQLite code path left and no build tag to switch back — this is a
+one-way port, not a dual-database abstraction.
 
-- embedded database (_SQLite_) with **realtime subscriptions**
+> **Not affiliated with the upstream project.** For upstream PocketBase, see
+> [pocketbase/pocketbase](https://github.com/pocketbase/pocketbase). Please do
+> not report issues found here to the upstream maintainers.
+
+Everything else PocketBase offers is unchanged:
+
+- database with **realtime subscriptions**
 - built-in **files and users management**
 - convenient **Admin dashboard UI**
-- and simple **REST-ish API**
+- simple **REST-ish API**
 
-**For documentation and examples, please visit https://pocketbase.io/docs.**
+**For general documentation and examples, upstream's docs still apply:
+https://pocketbase.io/docs.** For everything specific to this fork — connection
+settings, behavioural differences, backups — see **[POSTGRES.md](POSTGRES.md)**.
 
 > [!WARNING]
-> Please keep in mind that PocketBase is still under active development
-> and therefore full backward compatibility is not guaranteed before reaching v1.0.0.
+> PocketBase is under active development and full backward compatibility is not
+> guaranteed before v1.0.0. This fork adds its own deliberate API breaks on top
+> (see [Behaviour differences](#behaviour-differences)).
 
-## API SDK clients
+## Requirements
 
-The easiest way to interact with the PocketBase Web APIs is to use one of the official SDK clients:
+- [Go 1.25+](https://go.dev/doc/install)
+- **PostgreSQL 16 or newer** — the `IS JSON` predicate is used; the bundled
+  compose file pins 18
+- Docker, if you want the bundled Postgres rather than your own
+- `pg_dump` / `psql`, but only for the backup feature (they can run inside the
+  container — see [POSTGRES.md](POSTGRES.md#backups))
 
-- **JavaScript - [pocketbase/js-sdk](https://github.com/pocketbase/js-sdk)** (_Browser, Node.js, React Native_)
-- **Dart - [pocketbase/dart-sdk](https://github.com/pocketbase/dart-sdk)** (_Web, Mobile, Desktop, CLI_)
+## Quick start
 
-You could also check the recommendations in https://pocketbase.io/docs/how-to-use/.
+```bash
+docker-compose up -d postgres
+```
 
+```bash
+go run ./examples/base serve
+```
+
+That's it — the built-in defaults match the bundled compose file, so a fresh
+clone runs with no configuration at all.
+
+## Configuring the database
+
+Resolution order, first match wins:
+
+1. `--dbUrl` flag
+2. `PB_DB_URL` environment variable
+3. `db.json` in the data directory
+4. built-in defaults (`pocketbase:pocketbase@localhost:5432/pocketbase`)
+
+For a persistent change without managing env variables, use the `db` command:
+
+```bash
+pocketbase db show
+```
+
+```bash
+pocketbase db set --host db.internal --port 5432 --user app --password secret --dbName app
+```
+
+```bash
+pocketbase db test
+```
+
+`set` updates only the flags you pass and warns if a higher-priority source is
+currently overriding the stored values. These commands intentionally work even
+when the database is unreachable — that's what they're for.
+
+Full details, including the security caveat about storing passwords on disk, are
+in [POSTGRES.md](POSTGRES.md#configuring-the-connection).
+
+## Behaviour differences
+
+These are deliberate and documented in full in
+[POSTGRES.md](POSTGRES.md#behaviour-differences-from-upstream-sqlite-pocketbase):
+
+| Area | Behaviour |
+| --- | --- |
+| `strftime` in filters | Translated to `to_char` for common substitutions; **errors** on unsupported ones rather than silently returning different data |
+| `@rowid` | Backed by a real `BIGSERIAL` column, preserving insertion order |
+| `LIKE` | Becomes `ILIKE`, keeping filters case-insensitive |
+| `COLLATE NOCASE` | Becomes `LOWER()` functional indexes — no `citext` extension needed |
+| JSON extraction | Returns text, so comparing a JSON-stored number to a SQL number may differ from upstream |
+| View collections | Validated at **startup**, failing loudly instead of erroring later at runtime |
+| Backups | `pg_dump` / `psql` instead of a file copy |
 
 ## Overview
 
-### Use as standalone app
-
-You could download the prebuilt executable for your platform from the [Releases page](https://github.com/pocketbase/pocketbase/releases).
-Once downloaded, extract the archive and run `./pocketbase serve` in the extracted directory.
-
-The prebuilt executables are based on the [`examples/base/main.go` file](https://github.com/pocketbase/pocketbase/blob/master/examples/base/main.go) and comes with the JS VM plugin enabled by default which allows to extend PocketBase with JavaScript (_for more details please refer to [Extend with JavaScript](https://pocketbase.io/docs/js-overview/)_).
-
 ### Use as a Go framework/toolkit
 
-PocketBase is distributed as a regular Go library package which allows you to build
-your own custom app specific business logic and still have a single portable executable at the end.
-
-Here is a minimal example:
-
-0. [Install Go 1.25+](https://go.dev/doc/install) (_if you haven't already_)
+The module path is still `github.com/pocketbase/pocketbase`, so importing this
+fork requires a `replace` directive — otherwise Go resolves upstream and you get
+SQLite.
 
 1. Create a new project directory with the following `main.go` file inside it:
+
     ```go
     package main
 
@@ -80,79 +130,82 @@ Here is a minimal example:
     }
     ```
 
-2. To init the dependencies, run `go mod init myapp && go mod tidy`.
+2. Initialize the module and point it at this fork:
 
-3. To start the application, run `go run main.go serve`.
+    ```bash
+    go mod init myapp
+    ```
 
-4. To build a statically linked executable, you can run `CGO_ENABLED=0 go build` and then start the created executable with `./myapp serve`.
+    ```bash
+    go mod edit -replace github.com/pocketbase/pocketbase=github.com/mwakalinga/pocketbase-postgres@postgres-port
+    ```
 
-_For more details please refer to [Extend with Go](https://pocketbase.io/docs/go-overview/)._
+    ```bash
+    go mod tidy
+    ```
+
+    > [!WARNING]
+    > Pin an explicit branch or tag. The PostgreSQL work lives on the
+    > `postgres-port` branch; while the default branch still holds the
+    > pre-port code, `@latest` resolves to **SQLite** and the replacement will
+    > appear to work while giving you the wrong database. Once `postgres-port`
+    > is merged into the default branch, `@latest` becomes safe.
+
+    To develop against a local checkout instead, replace with the path:
+    `go mod edit -replace github.com/pocketbase/pocketbase=../pocketbase-postgres`
+
+3. Start the application with `go run main.go serve` (a reachable Postgres is
+   required — see [Quick start](#quick-start)).
+
+4. To build a statically linked executable, run `CGO_ENABLED=0 go build`.
+
+_For the framework API itself, upstream's [Extend with Go](https://pocketbase.io/docs/go-overview/) guide still applies._
 
 ### Building and running the repo main.go example
 
-To build the minimal standalone executable, like the prebuilt ones in the releases page, you can simply run `go build` inside the `examples/base` directory:
-
 0. [Install Go 1.25+](https://go.dev/doc/install) (_if you haven't already_)
-1. Clone/download the repo
+1. Clone the repo
 2. Navigate to `examples/base`
 3. Run `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build`
    (_https://go.dev/doc/install/source#environment_)
-4. Start the created executable by running `./base serve`.
+4. Start the created executable by running `./base serve`
 
-Note that the supported build targets by the pure Go SQLite driver at the moment are:
-
-```
-darwin  amd64
-darwin  arm64
-freebsd amd64
-freebsd arm64
-linux   386
-linux   amd64
-linux   arm
-linux   arm64
-linux   loong64
-linux   ppc64le
-linux   riscv64
-linux   s390x
-windows 386
-windows amd64
-windows arm64
-```
+The Postgres driver (`pgx`) is pure Go, so unlike upstream there is no
+driver-specific build target list — `CGO_ENABLED=0` cross-compiles to any
+platform Go itself supports.
 
 ### Testing
 
-PocketBase comes with mixed bag of unit and integration tests.
-To run them, use the standard `go test` command:
+The suite needs its own Postgres, provided by the compose file on port **5433**
+so a run never touches your dev data:
 
-```sh
+```bash
+docker-compose --profile test up -d postgres-test
+```
+
+```bash
 go test ./...
 ```
 
-Check also the [Testing guide](http://pocketbase.io/docs/testing) to learn how to write your own custom application tests.
+> Always pass `--profile test`. A plain `docker-compose up -d postgres` treats
+> the profile-gated `postgres-test` service as an orphan and **removes** it,
+> after which the whole suite fails with connection-refused errors that look
+> like code regressions.
+
+Each test process builds one migrated and seeded template database and clones it
+per test app, which keeps tests isolated while running in parallel. See
+[POSTGRES.md](POSTGRES.md#running-the-tests) for details and how to clean up
+leftovers.
 
 ## Security
 
-If you discover a security vulnerability within PocketBase, please send an e-mail to **support at pocketbase.io**.
+Vulnerabilities in **upstream PocketBase** should be reported to
+**support at pocketbase.io**, per [upstream's policy](https://github.com/pocketbase/pocketbase/security).
 
-All reports will be promptly addressed and you'll be credited in the fix release notes.
+Issues specific to **this fork** (anything in the Postgres layer) should be
+raised here instead — upstream cannot act on them.
 
-## Contributing
+## License
 
-PocketBase is free and open source project licensed under the [MIT License](LICENSE.md).
-You are free to do whatever you want with it, even offering it as a paid service.
-
-You could help continuing its development by:
-
-- [Contribute to the source code](CONTRIBUTING.md)
-- [Suggest new features and report issues](https://github.com/pocketbase/pocketbase/issues)
-
-Please refrain creating PRs for _new features_ without previously discussing the implementation details.
-PocketBase has a [roadmap](https://github.com/orgs/pocketbase/projects/2) and I try to work on issues in specific order and such PRs often come in out of nowhere and skew all initial planning with tedious back-and-forth communication.
-
-Don't get upset if I close your PR, even if it is well executed and tested. This doesn't mean that it will never be merged.
-Later we can always refer to it and/or take pieces of your implementation when the time comes to work on the issue (don't worry you'll be credited in the release notes).
-
-> [!IMPORTANT]
-> Due to recent LLM spam, PRs are temporary disabled and only existing collaborators can open a PR.
-> If you stumble on a problem that you want to fix, please consider instead opening an issue or discussion with link to your fork _(if not obvious - LLM contributions are not welcome)_.
-> This status may change in the future in case GitHub finally decide to do something about the constant spam, or when I find time to move the project somewhere else.
+PocketBase is licensed under the [MIT License](LICENSE.md), and so is this fork.
+Upstream retains copyright for the original work.

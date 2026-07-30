@@ -249,7 +249,9 @@ func (r *MigrationsRunner) initMigrationsTable() error {
 	}
 
 	rawQuery := fmt.Sprintf(
-		"CREATE TABLE IF NOT EXISTS {{%s}} (file VARCHAR(255) PRIMARY KEY NOT NULL, applied INTEGER NOT NULL)",
+		// note: BIGINT rather than INTEGER because "applied" holds a unix
+		// timestamp and Postgres INTEGER is only 32-bit
+		"CREATE TABLE IF NOT EXISTS {{%s}} (file VARCHAR(255) PRIMARY KEY NOT NULL, applied BIGINT NOT NULL)",
 		r.tableName,
 	)
 

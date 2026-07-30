@@ -8,7 +8,9 @@ import (
 )
 
 var (
-	indexRegex       = regexp.MustCompile(`(?im)create\s+(unique\s+)?\s*index\s*(if\s+not\s+exists\s+)?(\S*)\s+on\s+(\S*)\s*\(([\s\S]*)\)(?:\s*where\s+([\s\S]*))?`)
+	// note: the optional "USING <method>" clause is matched so that index
+	// definitions read back from Postgres (pg_indexes.indexdef) can be parsed
+	indexRegex       = regexp.MustCompile(`(?i)create\s+(unique\s+)?\s*index\s*(if\s+not\s+exists\s+)?(\S*)\s+on\s+(\S*)\s*(?:using\s+\S+\s*)?\(([\s\S]*?)\)(?:\s*where\s+([\s\S]*?))?\s*$`)
 	indexColumnRegex = regexp.MustCompile(`(?im)^([\s\S]+?)(?:\s+collate\s+([\w]+))?(?:\s+(asc|desc))?$`)
 )
 
@@ -28,6 +30,34 @@ type Index struct {
 	Columns    []IndexColumn `json:"columns"`
 	Unique     bool          `json:"unique"`
 	Optional   bool          `json:"optional"`
+}
+
+// backtickIdentifierRegex matches a backtick quoted SQL identifier.
+var backtickIdentifierRegex = regexp.MustCompile("`([^`]*)`")
+
+// normalizeBacktickIdentifiers rewrites backtick quoted identifiers into
+// their Postgres double quoted form.
+func normalizeBacktickIdentifiers(expr string) string {
+	return backtickIdentifierRegex.ReplaceAllString(expr, `"$1"`)
+}
+
+// lowerExprRegex matches a LOWER() call wrapping a single simple identifier.
+var lowerExprRegex = regexp.MustCompile(`(?i)^lower\s*\(\s*([^()]+?)\s*\)$`)
+
+// unwrapLowerExpr returns the identifier inside a LOWER() call.
+func unwrapLowerExpr(expr string) (string, bool) {
+	m := lowerExprRegex.FindStringSubmatch(strings.TrimSpace(expr))
+	if len(m) != 2 {
+		return "", false
+	}
+
+	return m[1], true
+}
+
+// isNocaseCollate checks whether the provided collate name is the legacy
+// SQLite case-insensitive collation.
+func isNocaseCollate(collate string) bool {
+	return strings.EqualFold(strings.TrimSpace(collate), "nocase")
 }
 
 // IsValid checks if the current Index contains the minimum required fields to be considered valid.
@@ -58,18 +88,18 @@ func (idx Index) Build() string {
 	}
 
 	if idx.SchemaName != "" {
-		str.WriteString("`")
+		str.WriteString(`"`)
 		str.WriteString(idx.SchemaName)
-		str.WriteString("`.")
+		str.WriteString(`".`)
 	}
 
-	str.WriteString("`")
+	str.WriteString(`"`)
 	str.WriteString(idx.IndexName)
-	str.WriteString("` ")
+	str.WriteString(`" `)
 
-	str.WriteString("ON `")
+	str.WriteString(`ON "`)
 	str.WriteString(idx.TableName)
-	str.WriteString("` (")
+	str.WriteString(`" (`)
 
 	if len(idx.Columns) > 1 {
 		str.WriteString("\n  ")
@@ -86,19 +116,30 @@ func (idx Index) Build() string {
 			str.WriteString(",\n  ")
 		}
 
+		var quotedColName string
 		if strings.Contains(col.Name, "(") || strings.Contains(col.Name, " ") {
 			// most likely an expression
-			str.WriteString(trimmedColName)
+			quotedColName = trimmedColName
 		} else {
 			// regular identifier
-			str.WriteString("`")
-			str.WriteString(trimmedColName)
-			str.WriteString("`")
+			quotedColName = `"` + trimmedColName + `"`
 		}
 
-		if col.Collate != "" {
-			str.WriteString(" COLLATE ")
-			str.WriteString(col.Collate)
+		// Postgres has no case-insensitive collation equivalent to SQLite's
+		// NOCASE, so it is expressed as a LOWER() functional index instead.
+		// The auth identity lookups compare with LOWER() to match.
+		if isNocaseCollate(col.Collate) {
+			str.WriteString("LOWER(")
+			str.WriteString(quotedColName)
+			str.WriteString(")")
+		} else {
+			str.WriteString(quotedColName)
+
+			if col.Collate != "" {
+				str.WriteString(` COLLATE "`)
+				str.WriteString(col.Collate)
+				str.WriteString(`"`)
+			}
 		}
 
 		if col.Sort != "" {
@@ -117,7 +158,9 @@ func (idx Index) Build() string {
 
 	if idx.Where != "" {
 		str.WriteString(" WHERE ")
-		str.WriteString(idx.Where)
+		// the predicate is passed through verbatim, so any backtick quoting
+		// (legacy definitions or hand-written index SQL) is normalized here
+		str.WriteString(normalizeBacktickIdentifiers(idx.Where))
 	}
 
 	return str.String()
@@ -157,7 +200,17 @@ func ParseIndex(createIndexExpr string) Index {
 
 	// TableName
 	// ---
-	result.TableName = strings.Trim(matches[4], trimChars)
+	// Postgres reports the table schema-qualified (eg. "public.posts"),
+	// so only the last part is kept as the table name.
+	tableTk := tokenizer.NewFromString(matches[4])
+	tableTk.Separators('.')
+
+	tableParts, _ := tableTk.ScanAll()
+	if len(tableParts) > 0 {
+		result.TableName = strings.Trim(tableParts[len(tableParts)-1], trimChars)
+	} else {
+		result.TableName = strings.Trim(matches[4], trimChars)
+	}
 
 	// Columns
 	// ---
@@ -179,9 +232,20 @@ func ParseIndex(createIndexExpr string) Index {
 			continue
 		}
 
+		collate := strings.TrimSpace(colMatches[2])
+
+		// A case-insensitive index is emitted as a LOWER() expression (see
+		// Build), so it is normalized back into a plain column with the nocase
+		// collate to keep the parse/build round-trip stable - callers such as
+		// the auth identity lookups rely on finding the index by column name.
+		if inner, ok := unwrapLowerExpr(trimmedName); ok {
+			trimmedName = strings.Trim(inner, trimChars)
+			collate = "NOCASE"
+		}
+
 		result.Columns = append(result.Columns, IndexColumn{
 			Name:    trimmedName,
-			Collate: strings.TrimSpace(colMatches[2]),
+			Collate: collate,
 			Sort:    strings.ToUpper(colMatches[3]),
 		})
 	}

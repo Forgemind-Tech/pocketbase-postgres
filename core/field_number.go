@@ -127,7 +127,9 @@ func (f *NumberField) SetHidden(hidden bool) {
 
 // ColumnType implements [Field.ColumnType] interface method.
 func (f *NumberField) ColumnType(app App) string {
-	return "NUMERIC DEFAULT 0 NOT NULL"
+	// note: DOUBLE PRECISION rather than NUMERIC, since the field values are
+	// handled as float64 and pgx scans NUMERIC into a decimal string
+	return "DOUBLE PRECISION DEFAULT 0 NOT NULL"
 }
 
 // PrepareValue implements [Field.PrepareValue] interface method.
