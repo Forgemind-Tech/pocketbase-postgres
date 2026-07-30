@@ -6,15 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/tools/list"
-	_ "modernc.org/sqlite"
 )
 
 func TestNewProvider(t *testing.T) {
@@ -302,8 +304,8 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[{"test1":1,"test2":"test2.1","test3":""},{"test1":2,"test2":"test2.2","test3":""}],"page":1,"perPage":10,"totalItems":2,"totalPages":1}`,
 			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE NOT (`test1` IS NULL)",
-				"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC LIMIT 10",
+				"SELECT COUNT(DISTINCT [[test.id]]) FROM \"test\" WHERE NOT (\"test1\" IS NULL)",
+				"SELECT * FROM \"test\" WHERE NOT (\"test1\" IS NULL) ORDER BY \"test1\" ASC LIMIT 10",
 			},
 		},
 		{
@@ -316,8 +318,8 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[],"page":10,"perPage":30,"totalItems":2,"totalPages":1}`,
 			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE NOT (`test1` IS NULL)",
-				"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC LIMIT 30 OFFSET 270",
+				"SELECT COUNT(DISTINCT [[test.id]]) FROM \"test\" WHERE NOT (\"test1\" IS NULL)",
+				"SELECT * FROM \"test\" WHERE NOT (\"test1\" IS NULL) ORDER BY \"test1\" ASC LIMIT 30 OFFSET 270",
 			},
 		},
 		{
@@ -352,8 +354,8 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[{"test1":2,"test2":"test2.2","test3":""}],"page":1,"perPage":` + fmt.Sprint(MaxPerPage) + `,"totalItems":1,"totalPages":1}`,
 			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE ((NOT (`test1` IS NULL)) AND (((test2 IS NOT '' AND test2 IS NOT NULL)))) AND (test1 >= 2)",
-				"SELECT * FROM `test` WHERE ((NOT (`test1` IS NULL)) AND (((test2 IS NOT '' AND test2 IS NOT NULL)))) AND (test1 >= 2) ORDER BY `test1` ASC, `test2` DESC LIMIT " + fmt.Sprint(MaxPerPage),
+				"SELECT COUNT(DISTINCT [[test.id]]) FROM \"test\" WHERE ((NOT (\"test1\" IS NULL)) AND (((test2 IS DISTINCT FROM '' AND test2 IS NOT NULL)))) AND (test1 >= 2)",
+				"SELECT * FROM \"test\" WHERE ((NOT (\"test1\" IS NULL)) AND (((test2 IS DISTINCT FROM '' AND test2 IS NOT NULL)))) AND (test1 >= 2) ORDER BY \"test1\" ASC, \"test2\" DESC LIMIT " + fmt.Sprint(MaxPerPage),
 			},
 		},
 		{
@@ -366,7 +368,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[{"test1":2,"test2":"test2.2","test3":""}],"page":1,"perPage":` + fmt.Sprint(MaxPerPage) + `,"totalItems":-1,"totalPages":-1}`,
 			[]string{
-				"SELECT * FROM `test` WHERE ((NOT (`test1` IS NULL)) AND (((test2 IS NOT '' AND test2 IS NOT NULL)))) AND (test1 >= 2) ORDER BY `test1` ASC, `test2` DESC LIMIT " + fmt.Sprint(MaxPerPage),
+				"SELECT * FROM \"test\" WHERE ((NOT (\"test1\" IS NULL)) AND (((test2 IS DISTINCT FROM '' AND test2 IS NOT NULL)))) AND (test1 >= 2) ORDER BY \"test1\" ASC, \"test2\" DESC LIMIT " + fmt.Sprint(MaxPerPage),
 			},
 		},
 		{
@@ -379,8 +381,8 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[],"page":1,"perPage":10,"totalItems":0,"totalPages":0}`,
 			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE (NOT (`test1` IS NULL)) AND (((test3 IS NOT '' AND test3 IS NOT NULL)))",
-				"SELECT * FROM `test` WHERE (NOT (`test1` IS NULL)) AND (((test3 IS NOT '' AND test3 IS NOT NULL))) ORDER BY `test1` ASC, `test3` ASC LIMIT 10",
+				"SELECT COUNT(DISTINCT [[test.id]]) FROM \"test\" WHERE (NOT (\"test1\" IS NULL)) AND (((test3 IS DISTINCT FROM '' AND test3 IS NOT NULL)))",
+				"SELECT * FROM \"test\" WHERE (NOT (\"test1\" IS NULL)) AND (((test3 IS DISTINCT FROM '' AND test3 IS NOT NULL))) ORDER BY \"test1\" ASC, \"test3\" ASC LIMIT 10",
 			},
 		},
 		{
@@ -393,7 +395,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[],"page":1,"perPage":10,"totalItems":-1,"totalPages":-1}`,
 			[]string{
-				"SELECT * FROM `test` WHERE (NOT (`test1` IS NULL)) AND (((test3 IS NOT '' AND test3 IS NOT NULL))) ORDER BY `test1` ASC, `test3` ASC LIMIT 10",
+				"SELECT * FROM \"test\" WHERE (NOT (\"test1\" IS NULL)) AND (((test3 IS DISTINCT FROM '' AND test3 IS NOT NULL))) ORDER BY \"test1\" ASC, \"test3\" ASC LIMIT 10",
 			},
 		},
 		{
@@ -406,8 +408,8 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[{"test1":2,"test2":"test2.2","test3":""}],"page":2,"perPage":1,"totalItems":2,"totalPages":2}`,
 			[]string{
-				"SELECT COUNT(DISTINCT [[test.id]]) FROM `test` WHERE NOT (`test1` IS NULL)",
-				"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC LIMIT 1 OFFSET 1",
+				"SELECT COUNT(DISTINCT [[test.id]]) FROM \"test\" WHERE NOT (\"test1\" IS NULL)",
+				"SELECT * FROM \"test\" WHERE NOT (\"test1\" IS NULL) ORDER BY \"test1\" ASC LIMIT 1 OFFSET 1",
 			},
 		},
 		{
@@ -420,7 +422,7 @@ func TestProviderExecNonEmptyQuery(t *testing.T) {
 			false,
 			`{"items":[{"test1":2,"test2":"test2.2","test3":""}],"page":2,"perPage":1,"totalItems":-1,"totalPages":-1}`,
 			[]string{
-				"SELECT * FROM `test` WHERE NOT (`test1` IS NULL) ORDER BY `test1` ASC LIMIT 1 OFFSET 1",
+				"SELECT * FROM \"test\" WHERE NOT (\"test1\" IS NULL) ORDER BY \"test1\" ASC LIMIT 1 OFFSET 1",
 			},
 		},
 	}
@@ -544,7 +546,7 @@ func TestProviderFilterAndSortLimits(t *testing.T) {
 			[]SortField{
 				{"id", SortAsc},
 				{"test1", SortDesc},
-				{strings.Repeat("a", MaxSortFieldLength), SortDesc},
+				{strings.Repeat("a", maxPgIdentifierLength), SortDesc},
 			},
 			0,
 			10,
@@ -600,7 +602,7 @@ func TestProviderFilterAndSortLimits(t *testing.T) {
 
 			hasErr := err != nil
 			if hasErr != s.expectError {
-				t.Fatalf("Expected hasErr %v, got %v", s.expectError, hasErr)
+				t.Fatalf("Expected hasErr %v, got %v (%v)", s.expectError, hasErr, err)
 			}
 		})
 	}
@@ -740,29 +742,71 @@ type testTableStruct struct {
 	Test3 string `db:"test3" json:"test3"`
 }
 
+var testSchemaCounter int64
+
 type testDB struct {
 	*dbx.DB
 	mu            sync.Mutex
 	CalledQueries []string
+	schema        string
+}
+
+// Close drops the dedicated test schema before closing the connection.
+func (db *testDB) Close() error {
+	if db.schema != "" {
+		_, _ = db.DB.NewQuery(`DROP SCHEMA IF EXISTS "` + db.schema + `" CASCADE`).Execute()
+	}
+
+	return db.DB.Close()
+}
+
+// maxPgIdentifierLength is the longest identifier Postgres accepts before
+// silently truncating it (NAMEDATALEN - 1).
+const maxPgIdentifierLength = 63
+
+// testDBUrl returns the Postgres connection string used by these tests.
+func testDBUrl() string {
+	if env := os.Getenv("PB_TEST_DB_URL"); env != "" {
+		return env
+	}
+
+	return "postgres://pocketbase:pocketbase@localhost:5433/pocketbase_test?sslmode=disable"
 }
 
 // NB! Don't forget to call `db.Close()` at the end of the test.
 func createTestDB() (*testDB, error) {
-	// using a shared cache to allow multiple connections access to
-	// the same in memory database https://www.sqlite.org/inmemorydb.html
-	sqlDB, err := sql.Open("sqlite", "file::memory:?cache=shared")
+	// each test db gets its own schema so that parallel tests don't collide
+	schema := "search_test_" + strconv.FormatInt(atomic.AddInt64(&testSchemaCounter, 1), 10) +
+		"_" + strconv.FormatInt(time.Now().UnixNano()%100000, 10)
+
+	sqlDB, err := sql.Open("pgx", testDBUrl())
 	if err != nil {
 		return nil, err
 	}
 
-	db := testDB{DB: dbx.NewFromDB(sqlDB, "sqlite")}
+	if _, err := sqlDB.Exec(`DROP SCHEMA IF EXISTS "` + schema + `" CASCADE`); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+	if _, err := sqlDB.Exec(`CREATE SCHEMA "` + schema + `"`); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+	if _, err := sqlDB.Exec(`SET search_path TO "` + schema + `"`); err != nil {
+		sqlDB.Close()
+		return nil, err
+	}
+
+	// a single connection keeps the session level search_path in effect
+	sqlDB.SetMaxOpenConns(1)
+
+	db := testDB{DB: dbx.NewFromDB(sqlDB, "pgx"), schema: schema}
 	db.CreateTable("test", map[string]string{
 		"id":                                    "int default 0",
 		"test1":                                 "int default 0",
 		"test2":                                 "text default ''",
 		"test3":                                 "text default ''",
-		strings.Repeat("a", MaxSortFieldLength): "text default ''",
-		strings.Repeat("b", MaxSortFieldLength+1): "text default ''",
+		strings.Repeat("a", maxPgIdentifierLength): "text default ''",
 	}).Execute()
 	db.Insert("test", dbx.Params{"id": 1, "test1": 1, "test2": "test2.1"}).Execute()
 	db.Insert("test", dbx.Params{"id": 2, "test1": 2, "test2": "test2.2"}).Execute()

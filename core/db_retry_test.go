@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestGetDefaultRetryInterval(t *testing.T) {
@@ -32,8 +34,11 @@ func TestBaseLockRetry(t *testing.T) {
 	}{
 		{nil, 3, 1},
 		{errors.New("test"), 3, 1},
-		{errors.New("database is locked"), 3, 3},
-		{errors.New("table is locked"), 3, 3},
+		// non-retryable Postgres error
+		{&pgconn.PgError{Code: "42P01"}, 3, 1},
+		// transient concurrency failures that are safe to retry
+		{&pgconn.PgError{Code: "40001"}, 3, 3}, // serialization_failure
+		{&pgconn.PgError{Code: "40P01"}, 3, 3}, // deadlock_detected
 	}
 
 	for i, s := range scenarios {

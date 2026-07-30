@@ -47,7 +47,7 @@ func TestSQLRun(t *testing.T) {
 			ExpectedContent: []string{
 				`"execTime":`,
 				`"affectedRows":0`,
-				`"columns":[{"name":"1","type":"","nullable":true}]`,
+				`"columns":[{"name":"?column?","type":"INT4","nullable":false}]`,
 				`"rows":[["1"]]`,
 			},
 			ExpectedEvents: map[string]int{"*": 0},
@@ -81,7 +81,7 @@ func TestSQLRun(t *testing.T) {
 			ExpectedContent: []string{
 				`"data":{}`,
 				`Raw error:`,
-				`SQL logic error`,
+				`syntax error`,
 			},
 			ExpectedEvents: map[string]int{"*": 0},
 		},
@@ -114,7 +114,7 @@ func TestSQLRun(t *testing.T) {
 			ExpectedContent: []string{
 				`"execTime":`,
 				`"affectedRows":0`,
-				`"columns":[{"name":"id","type":"","nullable":true}]`,
+				`"columns":[{"name":"id","type":"TEXT","nullable":false}]`,
 				`"rows":[["aaa`,
 			},
 			ExpectedEvents: map[string]int{"*": 0},
@@ -189,7 +189,7 @@ func TestSQLRun(t *testing.T) {
 			ExpectedContent: []string{
 				`"data":{}`,
 				`Raw error:`,
-				`SQL logic error`,
+				`syntax error`,
 			},
 			ExpectedEvents: map[string]int{"*": 0},
 		},
@@ -206,9 +206,11 @@ func TestSQLRun(t *testing.T) {
 			ExpectedContent: []string{
 				`"execTime":`,
 				`"affectedRows":0`,
-				// only the result of the last query should be returned
-				`"columns":[{"name":"2","type":"","nullable":true}]`,
-				`"rows":[["2"]]`,
+				// note: the pgx stdlib driver does not expose multiple result
+				// sets through database/sql, so the first statement's result is
+				// returned (SQLite reported the last one)
+				`"columns":[{"name":"?column?","type":"INT4","nullable":false}]`,
+				`"rows":[["1"]]`,
 			},
 			ExpectedEvents: map[string]int{"*": 0},
 		},

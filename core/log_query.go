@@ -39,8 +39,13 @@ func (app *BaseApp) LogsStats(expr dbx.Expression) ([]*LogsStatsItem, error) {
 	result := []*LogsStatsItem{}
 
 	query := app.LogQuery().
-		Select("count(id) as total", "strftime('%Y-%m-%d %H:00:00', created) as date").
-		GroupBy("date")
+		// note: matches the idx_logs_created_hour index expression so that the
+		// grouping can be served by it (see the _logs init migration)
+		Select("count(id) as total", `substr(created, 1, 13) || ':00:00' as date`).
+		GroupBy("date").
+		// note: Postgres does not guarantee any grouping order, so it is made
+		// explicit here (SQLite happened to return the groups chronologically)
+		OrderBy("date ASC")
 
 	if expr != nil {
 		query.AndWhere(expr)

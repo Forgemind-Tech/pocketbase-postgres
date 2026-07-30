@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,6 +17,8 @@ import (
 )
 
 func TestCreateBackup(t *testing.T) {
+	requirePgTools(t)
+
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
@@ -83,6 +86,8 @@ func TestCreateBackup(t *testing.T) {
 }
 
 func TestRestoreBackup(t *testing.T) {
+	requirePgTools(t)
+
 	app, _ := tests.NewTestApp()
 	defer app.Cleanup()
 
@@ -161,4 +166,16 @@ func getEntryNames(entries []fs.DirEntry) []string {
 	}
 
 	return names
+}
+
+// requirePgTools skips the test when the Postgres client binaries that the
+// backup/restore implementation shells out to are not installed.
+func requirePgTools(t *testing.T) {
+	t.Helper()
+
+	for _, bin := range []string{"pg_dump", "psql"} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s is not available in PATH - skipping the backup test", bin)
+		}
+	}
 }

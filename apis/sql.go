@@ -114,26 +114,37 @@ func executeQuery(app core.App, query string, maxRows int) (*runSQLResult, error
 		result.ExecTime = time.Since(now).Milliseconds()
 	}()
 
+	// note: a dedicated connection is used because the pgx extended protocol
+	// rejects multiple commands per query and this endpoint accepts raw SQL
+	rawDB, err := core.NewSimpleProtocolDB(app.DBUrl(), app.DataSchemaName())
+	if err != nil {
+		return nil, err
+	}
+	defer rawDB.Close()
+
 	// assume write/mutation query
 	// ---------------------------------------------------------------
 	if isPossibleWriteQuery {
 		// auto wrap in transaction in case there are multiple inline queries
-		txErr := app.RunInTransaction(func(txApp core.App) error {
-			execResult, err := txApp.NonconcurrentDB().NewQuery(query).WithContext(ctx).Execute()
-			if err != nil {
-				return err
-			}
+		tx, err := rawDB.Begin()
+		if err != nil {
+			return nil, err
+		}
 
-			result.AffectedRows, err = execResult.RowsAffected()
-			if err != nil {
-				// non-critical error (e.g. not supported by the driver)
-				txApp.Logger().Debug("Unable to fetch affected rows", slog.String("error", err.Error()))
-			}
+		execResult, err := tx.NewQuery(query).WithContext(ctx).Execute()
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
 
-			return nil
-		})
-		if txErr != nil {
-			return nil, txErr
+		result.AffectedRows, err = execResult.RowsAffected()
+		if err != nil {
+			// non-critical error (e.g. not supported by the driver)
+			app.Logger().Debug("Unable to fetch affected rows", slog.String("error", err.Error()))
+		}
+
+		if err := tx.Commit(); err != nil {
+			return nil, err
 		}
 
 		return result, nil
@@ -141,53 +152,62 @@ func executeQuery(app core.App, query string, maxRows int) (*runSQLResult, error
 
 	// assume query returning rows
 	// ---------------------------------------------------------------
-	rows, err := app.ConcurrentDB().NewQuery(query).WithContext(ctx).Rows()
+	rows, err := rawDB.NewQuery(query).WithContext(ctx).Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	// populate columns info
-	// ---
-	colTypes, err := rows.ColumnTypes()
-	if err != nil {
-		return nil, err
-	}
-
-	for _, colType := range colTypes {
-		col := runSQLResultColumn{
-			Name: colType.Name(),
-			Type: colType.DatabaseTypeName(),
-		}
-		col.Nullable, _ = colType.Nullable()
-
-		result.Columns = append(result.Columns, col)
-	}
-
-	// populate rows
-	// ---
-	for rows.Next() {
-		if len(result.Rows) >= maxRows {
-			break
-		}
-
-		rowData := make([]any, len(colTypes))
-		for i := 0; i < len(colTypes); i++ {
-			var v *string
-			rowData[i] = &v
-		}
-
-		err := rows.Scan(rowData...)
+	// populate the result from the last result set
+	//
+	// note: a raw query may contain multiple statements; the simple protocol
+	// returns one result set per statement and the last one is reported
+	for {
+		colTypes, err := rows.ColumnTypes()
 		if err != nil {
 			return nil, err
 		}
 
-		result.Rows = append(result.Rows, rowData)
-	}
+		columns := make([]runSQLResultColumn, 0, len(colTypes))
+		for _, colType := range colTypes {
+			col := runSQLResultColumn{
+				Name: colType.Name(),
+				Type: colType.DatabaseTypeName(),
+			}
+			col.Nullable, _ = colType.Nullable()
 
-	err = rows.Err()
-	if err != nil {
-		return nil, err
+			columns = append(columns, col)
+		}
+
+		resultRows := [][]any{}
+		for rows.Next() {
+			if len(resultRows) >= maxRows {
+				break
+			}
+
+			rowData := make([]any, len(colTypes))
+			for i := 0; i < len(colTypes); i++ {
+				var v *string
+				rowData[i] = &v
+			}
+
+			if err := rows.Scan(rowData...); err != nil {
+				return nil, err
+			}
+
+			resultRows = append(resultRows, rowData)
+		}
+
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+
+		result.Columns = columns
+		result.Rows = resultRows
+
+		if !rows.NextResultSet() {
+			break
+		}
 	}
 
 	return result, nil

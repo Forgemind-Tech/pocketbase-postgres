@@ -654,12 +654,12 @@ func (m *Collection) AddIndex(name string, unique bool, columnsExpr string, optW
 	if unique {
 		idx.WriteString("UNIQUE ")
 	}
-	idx.WriteString("INDEX `")
+	idx.WriteString(`INDEX "`)
 	idx.WriteString(name)
-	idx.WriteString("` ")
-	idx.WriteString("ON `")
+	idx.WriteString(`" `)
+	idx.WriteString(`ON "`)
 	idx.WriteString(m.Name)
-	idx.WriteString("` (")
+	idx.WriteString(`" (`)
 	idx.WriteString(columnsExpr)
 	idx.WriteString(")")
 	if optWhereExpr != "" {
@@ -696,7 +696,7 @@ func onCollectionDeleteExecute(e *CollectionEvent) error {
 
 	if !e.Collection.disableIntegrityChecks {
 		// ensure that there aren't any existing references.
-		// note: the select is outside of the transaction to prevent SQLITE_LOCKED error when mixing read&write in a single transaction
+		// note: the select is intentionally outside of the transaction below
 		references, err := e.App.FindCollectionReferences(e.Collection, e.Collection.Id)
 		if err != nil {
 			return fmt.Errorf("[%s] failed to check collection references: %w", e.Collection.Name, err)
@@ -1024,7 +1024,7 @@ func (c *Collection) initTokenKeyField() {
 	// ensure that there is a unique index for the field
 	if _, ok := dbutils.FindSingleColumnUniqueIndex(c.Indexes, FieldNameTokenKey); !ok {
 		c.Indexes = append(c.Indexes, fmt.Sprintf(
-			"CREATE UNIQUE INDEX `%s` ON `%s` (`%s`)",
+			`CREATE UNIQUE INDEX "%s" ON "%s" ("%s")`,
 			c.fieldIndexName(FieldNameTokenKey),
 			c.Name,
 			FieldNameTokenKey,
@@ -1050,7 +1050,7 @@ func (c *Collection) initEmailField() {
 	// ensure that there is a unique index for the email field
 	if _, ok := dbutils.FindSingleColumnUniqueIndex(c.Indexes, FieldNameEmail); !ok {
 		c.Indexes = append(c.Indexes, fmt.Sprintf(
-			"CREATE UNIQUE INDEX `%s` ON `%s` (`%s`) WHERE `%s` != ''",
+			`CREATE UNIQUE INDEX "%s" ON "%s" ("%s") WHERE "%s" != ''`,
 			c.fieldIndexName(FieldNameEmail),
 			c.Name,
 			FieldNameEmail,

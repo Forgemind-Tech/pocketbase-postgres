@@ -137,9 +137,16 @@ func (r *RecordFieldResolver) UpdateQuery(query *dbx.SelectQuery) error {
 		r.updateQueryWithDeduplicateConstraint(query)
 
 		for _, join := range r.joins {
+			on := join.On
+			if on == nil {
+				// note: Postgres requires an ON clause on every LEFT JOIN,
+				// including the set-returning function joins
+				on = dbx.NewExp("TRUE")
+			}
+
 			query.LeftJoin(
 				(join.TableName + " " + join.TableAlias),
-				join.On,
+				on,
 			)
 		}
 	}
@@ -197,9 +204,16 @@ func (r *RecordFieldResolver) updateQueryWithCollectionListRule(c *Collection, t
 		r.updateQueryWithDeduplicateConstraint(query)
 
 		for _, j := range cloneR.joins {
+			on := j.On
+			if on == nil {
+				// note: Postgres requires an ON clause on every LEFT JOIN,
+				// including the set-returning function joins
+				on = dbx.NewExp("TRUE")
+			}
+
 			query.LeftJoin(
 				(j.TableName + " " + j.TableAlias),
-				j.On,
+				on,
 			)
 		}
 	}

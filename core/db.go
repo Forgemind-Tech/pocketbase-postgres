@@ -19,6 +19,13 @@ import (
 const (
 	idColumn string = "id"
 
+	// rowidColumn is an auto-incrementing insertion-order column added to
+	// every record table. SQLite provided this implicitly via its builtin
+	// rowid; Postgres has no stable equivalent, so it is materialized.
+	//
+	// It backs the "@rowid" sort key and the list count optimization.
+	rowidColumn string = "_rowid_"
+
 	// DefaultIdLength is the default length of the generated model id.
 	DefaultIdLength int = 15
 

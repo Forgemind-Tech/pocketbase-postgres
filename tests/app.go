@@ -3,6 +3,7 @@ package tests
 
 import (
 	"io"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -21,6 +22,10 @@ type TestApp struct {
 
 	mux sync.Mutex
 
+	// ownDBUrl is set when the app created its own (cloned) test database
+	// and is therefore responsible for dropping it on cleanup.
+	ownDBUrl string
+
 	// EventCalls defines a map to inspect which app events
 	// (and how many times) were triggered.
 	EventCalls map[string]int
@@ -33,6 +38,12 @@ type TestApp struct {
 //
 // After this call, the app instance shouldn't be used anymore.
 func (t *TestApp) Cleanup() {
+	// tests commonly "defer app.Cleanup()" without checking the constructor
+	// error, so a nil app must not turn that into a confusing panic
+	if t == nil || t.BaseApp == nil {
+		return
+	}
+
 	event := new(core.TerminateEvent)
 	event.App = t
 
@@ -46,6 +57,13 @@ func (t *TestApp) Cleanup() {
 
 	if t.DataDir() != "" {
 		os.RemoveAll(t.DataDir())
+	}
+
+	// the connections are closed at this point, so the clone can be removed
+	if t.ownDBUrl != "" {
+		if err := dropTestDatabase(t.ownDBUrl); err != nil {
+			log.Println("[tests] failed to drop the test database:", err)
+		}
 	}
 }
 
@@ -106,6 +124,51 @@ func NewTestAppWithConfig(config core.BaseAppConfig) (*TestApp, error) {
 	// replace with the clone
 	config.DataDir = tempDir
 
+	// each test app gets its own database, cloned from a pre-migrated and
+	// pre-seeded template, so that tests are isolated without paying for a full
+	// schema build each time
+	usesOwnDatabase := config.DBUrl == ""
+	if usesOwnDatabase {
+		dbUrl, err := createTestDatabase(testDBName())
+		if err != nil {
+			os.RemoveAll(tempDir)
+			return nil, err
+		}
+		config.DBUrl = dbUrl
+	}
+
+	// the constructor can still fail below (bootstrap, migrations, seed) and
+	// every such path would otherwise abandon the freshly cloned database and
+	// the temp dir - the leftovers accumulate across runs and progressively
+	// slow the server down
+	success := false
+	defer func() {
+		if success {
+			return
+		}
+		os.RemoveAll(tempDir)
+		if usesOwnDatabase {
+			if err := dropTestDatabase(config.DBUrl); err != nil {
+				log.Println("[tests] failed to drop the partially initialized test database:", err)
+			}
+		}
+	}()
+
+	// keep the per-app pools small - the suite runs many apps in parallel
+	// against a single server and would otherwise exhaust max_connections
+	if config.DataMaxOpenConns == 0 {
+		config.DataMaxOpenConns = 4
+	}
+	if config.DataMaxIdleConns == 0 {
+		config.DataMaxIdleConns = 2
+	}
+	if config.AuxMaxOpenConns == 0 {
+		config.AuxMaxOpenConns = 2
+	}
+	if config.AuxMaxIdleConns == 0 {
+		config.AuxMaxIdleConns = 1
+	}
+
 	app := core.NewBaseApp(config)
 
 	// load data dir and db connections
@@ -122,8 +185,17 @@ func NewTestAppWithConfig(config core.BaseAppConfig) (*TestApp, error) {
 	}
 
 	// apply any missing migrations
+	//
+	// note: a cloned database already carries them (and the fixture), so this
+	// is only meaningful for callers that supplied their own DBUrl
 	if err := app.RunAllMigrations(); err != nil {
 		return nil, err
+	}
+
+	if !usesOwnDatabase {
+		if err := seedFixture(app); err != nil {
+			return nil, err
+		}
 	}
 
 	// force disable request logs because the logs db call execute in a separate
@@ -134,6 +206,9 @@ func NewTestAppWithConfig(config core.BaseAppConfig) (*TestApp, error) {
 		BaseApp:    app,
 		EventCalls: make(map[string]int),
 		TestMailer: &TestMailer{},
+	}
+	if usesOwnDatabase {
+		t.ownDBUrl = config.DBUrl
 	}
 
 	t.OnBootstrap().Bind(&hook.Handler[*core.BootstrapEvent]{
@@ -804,6 +879,8 @@ func NewTestAppWithConfig(config core.BaseAppConfig) (*TestApp, error) {
 		},
 		Priority: -99999,
 	})
+
+	success = true
 
 	return t, nil
 }

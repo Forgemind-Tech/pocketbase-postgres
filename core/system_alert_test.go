@@ -16,9 +16,9 @@ func TestSendSystemAlert(t *testing.T) {
 	}
 	defer os.RemoveAll(testDataDir)
 
-	testApp := NewBaseApp(BaseAppConfig{
+	testApp := NewBaseApp(isolatedTestConfig(t, BaseAppConfig{
 		DataDir: testDataDir,
-	})
+	}))
 	defer testApp.ResetBootstrapState()
 
 	if err := testApp.Bootstrap(); err != nil {
@@ -69,9 +69,9 @@ func TestSendSystemAlertToAllSuperusers(t *testing.T) {
 	}
 	defer os.RemoveAll(testDataDir)
 
-	testApp := NewBaseApp(BaseAppConfig{
+	testApp := NewBaseApp(isolatedTestConfig(t, BaseAppConfig{
 		DataDir: testDataDir,
-	})
+	}))
 	defer testApp.ResetBootstrapState()
 
 	if err := testApp.Bootstrap(); err != nil {

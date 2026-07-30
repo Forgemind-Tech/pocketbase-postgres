@@ -2,7 +2,6 @@ package core
 
 import (
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 
@@ -37,6 +36,10 @@ func (app *BaseApp) SyncRecordTableSchema(newCollection *Collection, oldCollecti
 			for _, field := range fields {
 				cols[field.GetName()] = field.ColumnType(app)
 			}
+
+			// materialize the insertion-order column that SQLite used to
+			// provide implicitly through its builtin rowid
+			cols[rowidColumn] = "BIGSERIAL"
 
 			// create table
 			if _, err := txApp.DB().CreateTable(tableName, cols).Execute(); err != nil {
@@ -142,12 +145,12 @@ func (app *BaseApp) SyncRecordTableSchema(newCollection *Collection, oldCollecti
 		return txErr
 	}
 
-	// run optimize per the SQLite recommendations
-	// (https://www.sqlite.org/pragma.html#pragma_optimize)
-	_, optimizeErr := app.NonconcurrentDB().NewQuery("PRAGMA optimize").Execute()
-	if optimizeErr != nil {
-		app.Logger().Warn("Failed to run PRAGMA optimize after record table sync", slog.String("error", optimizeErr.Error()))
-	}
+	// note: the SQLite "PRAGMA optimize" call that used to run here has no
+	// Postgres counterpart - the planner relies on autovacuum/autoanalyze.
+	//
+	// It was also actively harmful to keep as a best-effort call: a failing
+	// statement aborts the surrounding Postgres transaction, so the swallowed
+	// error would poison every subsequent query in it.
 
 	return nil
 }
@@ -182,16 +185,17 @@ func normalizeSingleVsMultipleFieldChanges(app App, newCollection *Collection, o
 			// -------------------------------------------------------
 
 			// temporary drop all views to prevent reference errors during the columns renaming
-			// (this is used as an "alternative" to the writable_schema PRAGMA)
 			views := []struct {
 				Name string `db:"name"`
 				SQL  string `db:"sql"`
 			}{}
-			err := txApp.DB().Select("name", "sql").
-				From("sqlite_master").
-				AndWhere(dbx.NewExp("sql is not null")).
-				AndWhere(dbx.HashExp{"type": "view"}).
-				All(&views)
+			err := txApp.DB().NewQuery(`
+				SELECT c.relname AS name,
+					'CREATE VIEW ' || quote_ident(c.relname) || ' AS ' || pg_get_viewdef(c.oid) AS sql
+				FROM pg_class c
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				WHERE n.nspname = current_schema() AND c.relkind = 'v'
+			`).All(&views)
 			if err != nil {
 				return err
 			}
@@ -224,20 +228,19 @@ func normalizeSingleVsMultipleFieldChanges(app App, newCollection *Collection, o
 				copyQuery = txApp.DB().NewQuery(fmt.Sprintf(
 					`UPDATE {{%s}} set [[%s]] = (
 							CASE
-								WHEN COALESCE([[%s]], '') = ''
-								THEN '[]'
+								WHEN COALESCE([[%s]]::text, '') = ''
+								THEN '[]'::jsonb
 								ELSE (
 									CASE
-										WHEN json_valid([[%s]]) AND json_type([[%s]]) == 'array'
-										THEN [[%s]]
-										ELSE json_array([[%s]])
+										WHEN [[%s]]::text IS JSON ARRAY
+										THEN [[%s]]::jsonb
+										ELSE jsonb_build_array([[%s]])
 									END
 								)
 							END
 						)`,
 					newCollection.Name,
 					originalName,
-					oldTempName,
 					oldTempName,
 					oldTempName,
 					oldTempName,
@@ -251,13 +254,13 @@ func normalizeSingleVsMultipleFieldChanges(app App, newCollection *Collection, o
 				copyQuery = txApp.DB().NewQuery(fmt.Sprintf(
 					`UPDATE {{%s}} set [[%s]] = (
 						CASE
-							WHEN COALESCE([[%s]], '[]') = '[]'
+							WHEN COALESCE([[%s]]::text, '[]') = '[]'
 							THEN ''
 							ELSE (
 								CASE
-									WHEN json_valid([[%s]]) AND json_type([[%s]]) == 'array'
-									THEN COALESCE(json_extract([[%s]], '$[#-1]'), '')
-									ELSE [[%s]]
+									WHEN [[%s]]::text IS JSON ARRAY
+									THEN COALESCE((SELECT e FROM jsonb_array_elements_text([[%s]]::jsonb) AS e OFFSET GREATEST(jsonb_array_length([[%s]]::jsonb) - 1, 0)), '')
+									ELSE [[%s]]::text
 								END
 							)
 						END

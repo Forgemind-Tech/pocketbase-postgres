@@ -1171,10 +1171,18 @@ func TestRecordCrudDelete(t *testing.T) {
 	ensureDeletedFiles := func(app *tests.TestApp, collectionId string, recordId string) {
 		storageDir := filepath.Join(app.DataDir(), "storage", collectionId, recordId)
 
-		entries, _ := os.ReadDir(storageDir)
-		if len(entries) != 0 {
-			t.Errorf("Expected empty/deleted dir, found: %d\n%v", len(entries), entries)
+		// note: the files are removed asynchronously after the delete, so the
+		// check waits instead of assuming the cleanup already finished
+		var entries []os.DirEntry
+		for i := 0; i < 100; i++ {
+			entries, _ = os.ReadDir(storageDir)
+			if len(entries) == 0 {
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
+
+		t.Errorf("Expected empty/deleted dir, found: %d\n%v", len(entries), entries)
 	}
 
 	scenarios := []tests.ApiScenario{

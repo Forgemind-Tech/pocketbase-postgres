@@ -2,7 +2,6 @@ package search
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/pocketbase/dbx"
@@ -100,25 +99,20 @@ func (r *SimpleFieldResolver) Resolve(field string) (*ResolverResult, error) {
 	}
 
 	// treat as json path
-	var jsonPath strings.Builder
-	jsonPath.WriteString("$")
+	//
+	// note: Postgres addresses nested json values with a path array literal
+	// (eg. `{a,b,0}`) rather than a SQLite-style `$.a.b[0]` string
+	segments := make([]string, 0, len(parts)-1)
 	for _, part := range parts[1:] {
-		if _, err := strconv.Atoi(part); err == nil {
-			jsonPath.WriteString("[")
-			jsonPath.WriteString(inflector.Columnify(part))
-			jsonPath.WriteString("]")
-		} else {
-			jsonPath.WriteString(".")
-			jsonPath.WriteString(inflector.Columnify(part))
-		}
+		segments = append(segments, `"`+inflector.Columnify(part)+`"`)
 	}
 
 	return &ResolverResult{
 		NullFallback: NullFallbackDisabled,
 		Identifier: fmt.Sprintf(
-			"JSON_EXTRACT([[%s]], '%s')",
+			"([[%s]]::jsonb #>> '{%s}')",
 			inflector.Columnify(parts[0]),
-			jsonPath.String(),
+			strings.Join(segments, ","),
 		),
 	}, nil
 }

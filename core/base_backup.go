@@ -79,14 +79,20 @@ func (app *BaseApp) CreateBackup(ctx context.Context, name string) error {
 		//
 		// run in transaction to temporary block other writes (transactions uses the NonconcurrentDB connection)
 		// ---
+		// dump the database alongside pb_data, since with Postgres the data
+		// no longer lives inside the data directory
+		dumpPath := filepath.Join(e.App.DataDir(), PgDumpFileName)
+		if err := pgDump(e.Context, e.App, dumpPath); err != nil {
+			return err
+		}
+		defer os.Remove(dumpPath)
+
 		tempPath := filepath.Join(localTempDir, "pb_backup_"+security.PseudorandomString(6))
 		createErr := e.App.RunInTransaction(func(txApp App) error {
 			return txApp.AuxRunInTransaction(func(txApp App) error {
-				// run manual checkpoint and truncate the WAL files
-				// (errors are ignored because it is not that important and the PRAGMA may not be supported by the used driver)
-				txApp.DB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute()
-				txApp.AuxDB().NewQuery("PRAGMA wal_checkpoint(TRUNCATE)").Execute()
-
+				// note: no WAL checkpoint equivalent is issued here - besides
+				// being meaningless for Postgres, a failing statement would
+				// abort the surrounding transaction rather than be ignored
 				return archive.Create(txApp.DataDir(), tempPath, e.Exclude...)
 			})
 		})
@@ -242,11 +248,19 @@ func (app *BaseApp) RestoreBackup(ctx context.Context, name string) error {
 			}
 		}
 
-		// ensure that at least a database file exists
-		extractedDB := filepath.Join(extractedDataDir, "data.db")
-		if _, err := os.Stat(extractedDB); err != nil {
-			return fmt.Errorf("data.db file is missing or invalid: %w", err)
+		// ensure that the database dump exists
+		extractedDump := filepath.Join(extractedDataDir, PgDumpFileName)
+		if _, err := os.Stat(extractedDump); err != nil {
+			return fmt.Errorf("%s file is missing or invalid: %w", PgDumpFileName, err)
 		}
+
+		// load the dump back into Postgres before swapping the pb_data content
+		if err := pgRestore(e.Context, e.App, extractedDump); err != nil {
+			return err
+		}
+
+		// the dump is not part of the restored pb_data
+		_ = os.Remove(extractedDump)
 
 		oldTempDataDir := filepath.Join(localTempDir, "old_pb_data_"+security.PseudorandomString(8))
 

@@ -10,6 +10,71 @@ import (
 	"github.com/pocketbase/dbx"
 )
 
+// sqliteToPgTimeFormatSpecifiers maps the SQLite strftime substitutions
+// onto their Postgres to_char template equivalents.
+var sqliteToPgTimeFormatSpecifiers = map[byte]string{
+	'Y': "YYYY", // year
+	'm': "MM",   // month
+	'd': "DD",   // day of month
+	'H': "HH24", // hour
+	'M': "MI",   // minute
+	'S': "SS",   // second
+	'j': "DDD",  // day of year
+	'f': "MS",   // fractional seconds
+	'p': "AM",   // meridiem
+	'I': "HH12", // hour, 12-hour clock
+}
+
+// sqliteToPgTimeFormat converts a SQLite strftime format string into a
+// Postgres to_char template.
+//
+// Unsupported substitutions are rejected rather than silently dropped, so
+// that a filter never quietly returns differently formatted data.
+func sqliteToPgTimeFormat(format string) (string, error) {
+	var b strings.Builder
+
+	for i := 0; i < len(format); i++ {
+		c := format[i]
+
+		if c != '%' {
+			// a literal quote would break out of the emitted template string
+			if c == '\'' || c == '"' {
+				return "", fmt.Errorf("[strftime] unsupported character %q in the format argument", c)
+			}
+			// escape characters that to_char would otherwise interpret
+			if (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') {
+				b.WriteString(`"`)
+				b.WriteByte(c)
+				b.WriteString(`"`)
+			} else {
+				b.WriteByte(c)
+			}
+			continue
+		}
+
+		if i+1 >= len(format) {
+			return "", errors.New("[strftime] dangling % at the end of the format argument")
+		}
+
+		i++
+		next := format[i]
+
+		if next == '%' {
+			b.WriteByte('%')
+			continue
+		}
+
+		replacement, ok := sqliteToPgTimeFormatSpecifiers[next]
+		if !ok {
+			return "", fmt.Errorf("[strftime] unsupported format substitution %%%c", next)
+		}
+
+		b.WriteString(replacement)
+	}
+
+	return b.String(), nil
+}
+
 var TokenFunctions = map[string]func(
 	argTokenResolverFunc func(fexpr.Token) (*ResolverResult, error),
 	args ...fexpr.Token,
@@ -96,16 +161,20 @@ var TokenFunctions = map[string]func(
 			return nil, errors.New("[strftime] expects the first argument to be a format string")
 		}
 
-		formatArgResult, err := argTokenResolverFunc(args[0])
+		// the format is translated at build time from its literal value,
+		// since Postgres has no strftime equivalent to pass it through to
+		pgFormat, err := sqliteToPgTimeFormat(args[0].Literal)
 		if err != nil {
-			return nil, fmt.Errorf("[strftime] failed to resolve format argument: %w", err)
+			return nil, err
 		}
 
-		// no further arguments
+		// no further arguments (no time-value to format)
 		if totalArgs == 1 {
-			formatArgResult.NullFallback = NullFallbackEnforced
-			formatArgResult.Identifier = "strftime(" + formatArgResult.Identifier + ")"
-			return formatArgResult, nil
+			return &ResolverResult{
+				NullFallback: NullFallbackEnforced,
+				Identifier:   "NULL",
+				Params:       dbx.Params{},
+			}, nil
 		}
 
 		// time-value arg
@@ -122,18 +191,12 @@ var TokenFunctions = map[string]func(
 
 		// modifiers args
 		// -----------------------------------------------------------
-		resolvedModifierArgs := make([]*ResolverResult, totalArgs-2)
-		for i, arg := range args[2:] {
-			if arg.Type != fexpr.TokenText {
-				return nil, fmt.Errorf("[strftime] invalid modifier argument %d - can be only string", i)
-			}
-
-			resolved, err := argTokenResolverFunc(arg)
-			if err != nil {
-				return nil, fmt.Errorf("[strftime] failed to resolve modifier argument %d: %w", i, err)
-			}
-
-			resolvedModifierArgs[i] = resolved
+		//
+		// The SQLite date modifiers ("+1 day", "start of month", "utc", ...)
+		// have no direct Postgres analogue and cannot be reproduced faithfully,
+		// so they are rejected instead of being silently ignored.
+		if totalArgs > 2 {
+			return nil, errors.New("[strftime] date modifier arguments are not supported")
 		}
 
 		// generating new ResolverResult
@@ -143,33 +206,22 @@ var TokenFunctions = map[string]func(
 			Params:       dbx.Params{},
 		}
 
-		identifiers := make([]string, 0, totalArgs)
-
-		identifiers = append(identifiers, formatArgResult.Identifier)
-		if err = concatUniqueParams(result.Params, formatArgResult.Params); err != nil {
-			return nil, err
-		}
-
-		identifiers = append(identifiers, timeValueArgResult.Identifier)
 		if err = concatUniqueParams(result.Params, timeValueArgResult.Params); err != nil {
 			return nil, err
 		}
 
-		for _, m := range resolvedModifierArgs {
-			identifiers = append(identifiers, m.Identifier)
-			err = concatUniqueParams(result.Params, m.Params)
-			if err != nil {
-				return nil, err
-			}
+		// note: the format is an inlined literal rather than a bound param,
+		// because to_char() requires a constant template
+		buildExpr := func(timeIdentifier string) string {
+			return "to_char((" + timeIdentifier + ")::timestamptz, '" + pgFormat + "')"
 		}
 
-		result.Identifier = "strftime(" + strings.Join(identifiers, ",") + ")"
+		result.Identifier = buildExpr(timeValueArgResult.Identifier)
 
 		if timeValueArgResult.MultiMatchSubQuery != nil {
 			// replace the regular time-value identifier with the multi-match one
-			identifiers[1] = timeValueArgResult.MultiMatchSubQuery.ValueIdentifier
 			result.MultiMatchSubQuery = timeValueArgResult.MultiMatchSubQuery
-			result.MultiMatchSubQuery.ValueIdentifier = "strftime(" + strings.Join(identifiers, ",") + ")"
+			result.MultiMatchSubQuery.ValueIdentifier = buildExpr(timeValueArgResult.MultiMatchSubQuery.ValueIdentifier)
 
 			err = concatUniqueParams(result.MultiMatchSubQuery.Params, result.Params)
 			if err != nil {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	validation "github.com/pocketbase/ozzo-validation/v4"
 	"github.com/pocketbase/pocketbase/core/validators"
 	"github.com/pocketbase/pocketbase/tests"
@@ -73,35 +75,35 @@ func TestNormalizeUniqueIndexError(t *testing.T) {
 		},
 		{
 			"unique index error but mismatched table name",
-			errors.New("UNIQUE constraint failed for fields test.a,test.b"),
+			&pgconn.PgError{Code: "23505", TableName: "test", Detail: "Key (a, b)=(x) already exists."},
 			"example",
 			[]string{"a", "b"},
 			nil,
 		},
 		{
 			"unique index error with table name suffix matching the specified one",
-			errors.New("UNIQUE constraint failed for fields test_suffix.a,test_suffix.b"),
+			&pgconn.PgError{Code: "23505", TableName: "test_suffix", Detail: "Key (a, b)=(x) already exists."},
 			"suffix",
 			[]string{"a", "b", "c"},
 			nil,
 		},
 		{
 			"unique index error but mismatched fields",
-			errors.New("UNIQUE constraint failed for fields test.a,test.b"),
+			&pgconn.PgError{Code: "23505", TableName: "test", Detail: "Key (a, b)=(x) already exists."},
 			"test",
 			[]string{"c", "d"},
 			nil,
 		},
 		{
 			"unique index error with matching table name and fields",
-			errors.New("UNIQUE constraint failed for fields test.a,test.b"),
+			&pgconn.PgError{Code: "23505", TableName: "test", Detail: "Key (a, b)=(x) already exists."},
 			"test",
 			[]string{"a", "b", "c"},
 			[]string{"a", "b"},
 		},
 		{
 			"unique index error with matching table name and field starting with the name of another non-unique field",
-			errors.New("UNIQUE constraint failed for fields test.a_2,test.c"),
+			&pgconn.PgError{Code: "23505", TableName: "test", Detail: "Key (a_2, c)=(x) already exists."},
 			"test",
 			[]string{"a", "a_2", "c"},
 			[]string{"a_2", "c"},

@@ -64,6 +64,15 @@ type App interface {
 	// DataDir returns the app data directory path.
 	DataDir() string
 
+	// DBUrl returns the Postgres connection string used by the app.
+	DBUrl() string
+
+	// DataSchemaName returns the Postgres schema holding the collection/record tables.
+	DataSchemaName() string
+
+	// AuxSchemaName returns the Postgres schema holding the auxiliary (logs) tables.
+	AuxSchemaName() string
+
 	// EncryptionEnv returns the name of the app secret env key
 	// (currently used primarily for optional settings encryption but this may change in the future).
 	EncryptionEnv() string
@@ -148,7 +157,7 @@ type App interface {
 
 	// DB returns the default app data.db builder instance.
 	//
-	// To minimize SQLITE_BUSY errors, it automatically routes the
+	// It automatically routes the
 	// SELECT queries to the underlying concurrent db pool and everything else
 	// to the nonconcurrent one.
 	//
@@ -183,7 +192,7 @@ type App interface {
 
 	// AuxDB returns the app auxiliary.db builder instance.
 	//
-	// To minimize SQLITE_BUSY errors, it automatically routes the
+	// It automatically routes the
 	// SELECT queries to the underlying concurrent db pool and everything else
 	// to the nonconcurrent one.
 	//

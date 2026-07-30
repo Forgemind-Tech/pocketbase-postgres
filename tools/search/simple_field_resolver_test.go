@@ -59,7 +59,7 @@ func TestSimpleFieldResolverResolve(t *testing.T) {
 		{"test_regex", true, ""},
 		{"test_regex1", false, "[[test_regex1]]"},
 		{"Test columnify!", false, "[[Testcolumnify]]"},
-		{"data.test", false, "JSON_EXTRACT([[data]], '$.test')"},
+		{"data.test", false, `([[data]]::jsonb #>> '{"test"}')`},
 	}
 
 	for i, s := range scenarios {

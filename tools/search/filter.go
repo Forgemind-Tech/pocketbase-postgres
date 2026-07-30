@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -166,12 +167,104 @@ func resolveTokenizedExpr(expr fexpr.Expr, fieldResolver FieldResolver) (dbx.Exp
 	return buildResolversExpr(lResult, expr.Op, rResult)
 }
 
+// numericTextRegex is the guard used before casting an extracted json value
+// to numeric.
+const numericTextRegex = `^-?[0-9]+(\.[0-9]+)?$`
+
+// isJSONExtract reports whether the operand is a json path extraction, which
+// always resolves to text (see dbutils.JSONExtract).
+func isJSONExtract(r *ResolverResult) bool {
+	return strings.Contains(r.Identifier, "#>>")
+}
+
+// castJSONExtractToNumeric numerically compares a json extraction when the
+// other operand is a number.
+func castJSONExtractToNumeric(target, other *ResolverResult) {
+	if !isJSONExtract(target) || !isBareParam(other) || !isNumericParam(other) {
+		return
+	}
+
+	target.Identifier = fmt.Sprintf(
+		`(CASE WHEN (%s) ~ '%s' THEN (%s)::numeric ELSE NULL END)`,
+		target.Identifier, numericTextRegex, target.Identifier,
+	)
+}
+
+// bareParamRegex matches an identifier that is nothing but a placeholder.
+var bareParamRegex = regexp.MustCompile(`^\{:\w+\}$`)
+
+// isBareParam reports whether the operand resolves to a single bound parameter
+// rather than to a column or expression.
+func isBareParam(r *ResolverResult) bool {
+	return len(r.Params) == 1 && bareParamRegex.MatchString(r.Identifier)
+}
+
+// isNumericParam reports whether a bare parameter carries a numeric value.
+func isNumericParam(r *ResolverResult) bool {
+	for _, v := range r.Params {
+		switch v.(type) {
+		case float64, float32, int, int8, int16, int32, int64,
+			uint, uint8, uint16, uint32, uint64:
+			return true
+		}
+	}
+
+	return false
+}
+
+// castComparisonOperands explicitly types the operands of a comparison when
+// neither side is a column.
+//
+// Postgres infers a parameter's type from the other side of the comparison, so
+// when both sides are parameters it falls back to text and the driver then
+// fails to encode a numeric value. Two numbers are compared as numbers; any
+// other combination falls back to text, which matches the SQLite behaviour of a
+// non-numeric comparison simply not matching instead of erroring.
+func castComparisonOperands(left, right *ResolverResult) {
+	// A json path extraction yields text, so comparing it against a number
+	// would make Postgres infer a text parameter that the numeric value
+	// cannot be encoded into. The extraction is numerically compared instead,
+	// falling back to NULL for values that aren't numbers (SQLite simply did
+	// not match those).
+	castJSONExtractToNumeric(left, right)
+	castJSONExtractToNumeric(right, left)
+
+	if !isBareParam(left) || !isBareParam(right) {
+		return // at least one side is a column/expression to infer from
+	}
+
+	leftNumeric, rightNumeric := isNumericParam(left), isNumericParam(right)
+
+	if leftNumeric && rightNumeric {
+		left.Identifier += "::numeric"
+		right.Identifier += "::numeric"
+		return
+	}
+
+	if !leftNumeric && !rightNumeric {
+		// nothing to disambiguate - Postgres already resolves two untyped
+		// parameters as text, which is what the comparison needs
+		return
+	}
+
+	// mixed types are compared as text, which requires the values themselves
+	// to be sent as text and not just the placeholder to be cast
+	for _, r := range []*ResolverResult{left, right} {
+		r.Identifier += "::text"
+		for k, v := range r.Params {
+			r.Params[k] = cast.ToString(v)
+		}
+	}
+}
+
 func buildResolversExpr(
 	left *ResolverResult,
 	op fexpr.SignOp,
 	right *ResolverResult,
 ) (dbx.Expression, error) {
 	var expr dbx.Expression
+
+	castComparisonOperands(left, right)
 
 	switch op {
 	case fexpr.SignEq, fexpr.SignAnyEq:
@@ -181,16 +274,16 @@ func buildResolversExpr(
 	case fexpr.SignLike, fexpr.SignAnyLike:
 		// the right side is a column and therefor wrap it with "%" for contains like behavior
 		if len(right.Params) == 0 {
-			expr = dbx.NewExp(fmt.Sprintf("%s LIKE ('%%' || %s || '%%') ESCAPE '\\'", left.Identifier, right.Identifier), left.Params)
+			expr = dbx.NewExp(fmt.Sprintf("%s ILIKE ('%%' || %s || '%%') ESCAPE '\\'", left.Identifier, right.Identifier), left.Params)
 		} else {
-			expr = dbx.NewExp(fmt.Sprintf("%s LIKE %s ESCAPE '\\'", left.Identifier, right.Identifier), mergeParams(left.Params, wrapLikeParams(right.Params)))
+			expr = dbx.NewExp(fmt.Sprintf("%s ILIKE %s ESCAPE '\\'", left.Identifier, right.Identifier), mergeParams(left.Params, wrapLikeParams(right.Params)))
 		}
 	case fexpr.SignNlike, fexpr.SignAnyNlike:
 		// the right side is a column and therefor wrap it with "%" for not-contains like behavior
 		if len(right.Params) == 0 {
-			expr = dbx.NewExp(fmt.Sprintf("%s NOT LIKE ('%%' || %s || '%%') ESCAPE '\\'", left.Identifier, right.Identifier), left.Params)
+			expr = dbx.NewExp(fmt.Sprintf("%s NOT ILIKE ('%%' || %s || '%%') ESCAPE '\\'", left.Identifier, right.Identifier), left.Params)
 		} else {
-			expr = dbx.NewExp(fmt.Sprintf("%s NOT LIKE %s ESCAPE '\\'", left.Identifier, right.Identifier), mergeParams(left.Params, wrapLikeParams(right.Params)))
+			expr = dbx.NewExp(fmt.Sprintf("%s NOT ILIKE %s ESCAPE '\\'", left.Identifier, right.Identifier), mergeParams(left.Params, wrapLikeParams(right.Params)))
 		}
 	case fexpr.SignLt, fexpr.SignAnyLt:
 		expr = dbx.NewExp(fmt.Sprintf("%s < %s", left.Identifier, right.Identifier), mergeParams(left.Params, right.Params))
@@ -253,9 +346,12 @@ var normalizedIdentifiers = map[string]string{
 	// if `null` field is missing, treat `null` identifier as NULL token
 	"null": "NULL",
 	// if `true` field is missing, treat `true` identifier as TRUE token
-	"true": "1",
+	//
+	// note: SQLite had no boolean type and used 1/0, but Postgres rejects
+	// comparing a boolean column against an integer
+	"true": "TRUE",
 	// if `false` field is missing, treat `false` identifier as FALSE token
-	"false": "0",
+	"false": "FALSE",
 }
 
 func resolveToken(token fexpr.Token, fieldResolver FieldResolver) (*ResolverResult, error) {
@@ -327,14 +423,18 @@ func resolveToken(token fexpr.Token, fieldResolver FieldResolver) (*ResolverResu
 // with a seek while the COALESCE will induce a table scan.
 func resolveEqualExpr(equal bool, left, right *ResolverResult) dbx.Expression {
 	equalOp := "="
-	nullEqualOp := "IS"
+	// note: SQLite allows "a IS b" as a null-safe equality operator, but in
+	// Postgres "IS" only accepts NULL/TRUE/FALSE, so the standard
+	// "IS [NOT] DISTINCT FROM" spelling is used instead
+	nullEqualOp := "IS NOT DISTINCT FROM"
 	concatOp := "OR"
 	nullExpr := "IS NULL"
 	if !equal {
-		// always use `IS NOT` instead of `!=` because direct non-equal comparisons
-		// to nullable column values that are actually NULL yields to NULL instead of TRUE, eg.:
+		// always use a null-safe comparison instead of `!=` because direct non-equal
+		// comparisons to nullable column values that are actually NULL yields to NULL
+		// instead of TRUE, eg.:
 		// `'example' != nullableColumn` -> NULL even if nullableColumn row value is NULL
-		equalOp = "IS NOT"
+		equalOp = "IS DISTINCT FROM"
 		nullEqualOp = equalOp
 		concatOp = "AND"
 		nullExpr = "IS NOT NULL"

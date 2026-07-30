@@ -12,7 +12,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/pocketbase/pocketbase/cmd"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/list"
 	"github.com/pocketbase/pocketbase/tools/osutils"
 	"github.com/pocketbase/pocketbase/tools/routine"
@@ -35,6 +34,7 @@ type PocketBase struct {
 
 	devFlag           bool
 	dataDirFlag       string
+	dbUrlFlag         string
 	encryptionEnvFlag string
 	queryTimeout      int
 	hideStartBanner   bool
@@ -51,6 +51,7 @@ type Config struct {
 	// optional default values for the console flags
 	DefaultDev           bool
 	DefaultDataDir       string // if not set, it will fallback to "./pb_data"
+	DefaultDBUrl         string // if not set, it will fallback to $PB_DB_URL and then core.DefaultDBUrl
 	DefaultEncryptionEnv string
 	DefaultQueryTimeout  time.Duration // default to core.DefaultQueryTimeout (in seconds)
 
@@ -113,6 +114,7 @@ func NewWithConfig(config Config) *PocketBase {
 		},
 		devFlag:           config.DefaultDev,
 		dataDirFlag:       config.DefaultDataDir,
+		dbUrlFlag:         config.DefaultDBUrl,
 		encryptionEnvFlag: config.DefaultEncryptionEnv,
 		hideStartBanner:   config.HideStartBanner,
 	}
@@ -128,6 +130,7 @@ func NewWithConfig(config Config) *PocketBase {
 	pb.App = core.NewBaseApp(core.BaseAppConfig{
 		IsDev:            pb.devFlag,
 		DataDir:          pb.dataDirFlag,
+		DBUrl:            pb.dbUrlFlag,
 		EncryptionEnv:    pb.encryptionEnvFlag,
 		QueryTimeout:     time.Duration(pb.queryTimeout) * time.Second,
 		DataMaxOpenConns: config.DataMaxOpenConns,
@@ -139,24 +142,6 @@ func NewWithConfig(config Config) *PocketBase {
 
 	// hide the default help command (allow only `--help` flag)
 	pb.RootCmd.SetHelpCommand(&cobra.Command{Hidden: true})
-
-	// https://github.com/pocketbase/pocketbase/issues/6136
-	pb.OnBootstrap().Bind(&hook.Handler[*core.BootstrapEvent]{
-		Id: ModerncDepsCheckHookId,
-		Func: func(be *core.BootstrapEvent) error {
-			if err := be.Next(); err != nil {
-				return err
-			}
-
-			// run separately to avoid blocking
-			app := be.App
-			routine.FireAndForget(func() {
-				checkModerncDeps(app)
-			})
-
-			return nil
-		},
-	})
 
 	return pb
 }
@@ -236,6 +221,13 @@ func (pb *PocketBase) eagerParseFlags(config *Config) error {
 		"dev",
 		config.DefaultDev,
 		"enable dev mode, aka. printing logs and sql statements to the console",
+	)
+
+	pb.RootCmd.PersistentFlags().StringVar(
+		&pb.dbUrlFlag,
+		"dbUrl",
+		config.DefaultDBUrl,
+		"the Postgres connection string \n(fallbacks to the PB_DB_URL env variable and then to the built-in default)",
 	)
 
 	pb.RootCmd.PersistentFlags().IntVar(

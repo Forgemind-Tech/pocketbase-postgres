@@ -1,0 +1,59 @@
+services:
+  postgres:
+    image: postgres:18
+    container_name: pocketbase-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pocketbase
+      POSTGRES_PASSWORD: pocketbase
+      POSTGRES_DB: pocketbase
+    ports:
+      - "5432:5432"
+    volumes:
+      # note: postgres:18+ expects a single mount at /var/lib/postgresql and
+      # places the cluster in a major-version subdirectory beneath it
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pocketbase -d pocketbase"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Throwaway instance used by the Go test suite. Runs on a separate port and
+  # its own volume so a full suite run never touches the dev data above.
+  #
+  # note: it deliberately does NOT use tmpfs - the suite creates a schema per
+  # test app and the resulting WAL/checkpoint churn exhausts RAM and kills the
+  # server partway through a full run.
+  postgres-test:
+    image: postgres:18
+    container_name: pocketbase-postgres-test
+    profiles: ["test"]
+    environment:
+      POSTGRES_USER: pocketbase
+      POSTGRES_PASSWORD: pocketbase
+      POSTGRES_DB: pocketbase_test
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgtestdata:/var/lib/postgresql
+    # the suite runs many test apps in parallel, each with its own pools;
+    # durability is irrelevant for throwaway test data, so fsync is disabled
+    # to keep the schema churn cheap
+    command:
+      [
+        "postgres",
+        "-c", "max_connections=500",
+        "-c", "fsync=off",
+        "-c", "synchronous_commit=off",
+        "-c", "full_page_writes=off",
+      ]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pocketbase -d pocketbase_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  pgdata:
+  pgtestdata:

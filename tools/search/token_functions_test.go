@@ -289,8 +289,8 @@ func TestTokenFunctionsStrftime(t *testing.T) {
 			baseTokenResolver,
 			&ResolverResult{
 				NullFallback: NullFallbackEnforced,
-				Identifier:   `strftime({:format})`,
-				Params:       map[string]any{"format": "abc"},
+				Identifier:   `NULL`,
+				Params:       map[string]any{},
 			},
 			false,
 		},
@@ -326,8 +326,8 @@ func TestTokenFunctionsStrftime(t *testing.T) {
 			baseTokenResolver,
 			&ResolverResult{
 				NullFallback: NullFallbackEnforced,
-				Identifier:   `strftime({:format},{:time})`,
-				Params:       map[string]any{"format": "1", "time": "2"},
+				Identifier:   `to_char(({:time})::timestamptz, '1')`,
+				Params:       map[string]any{"time": "2"},
 			},
 			false,
 		},
@@ -340,8 +340,8 @@ func TestTokenFunctionsStrftime(t *testing.T) {
 			baseTokenResolver,
 			&ResolverResult{
 				NullFallback: NullFallbackEnforced,
-				Identifier:   `strftime({:format},{:time})`,
-				Params:       map[string]any{"format": "1", "time": "2"},
+				Identifier:   `to_char(({:time})::timestamptz, '1')`,
+				Params:       map[string]any{"time": "2"},
 			},
 			false,
 		},
@@ -354,8 +354,8 @@ func TestTokenFunctionsStrftime(t *testing.T) {
 			baseTokenResolver,
 			&ResolverResult{
 				NullFallback: NullFallbackEnforced,
-				Identifier:   `strftime({:format},{:time})`,
-				Params:       map[string]any{"format": "1", "time": "2"},
+				Identifier:   `to_char(({:time})::timestamptz, '1')`,
+				Params:       map[string]any{"time": "2"},
 			},
 			false,
 		},
@@ -419,12 +419,8 @@ func TestTokenFunctionsStrftime(t *testing.T) {
 				{Literal: "4", Type: fexpr.TokenText}, // valid modifier
 			},
 			baseTokenResolver,
-			&ResolverResult{
-				NullFallback: NullFallbackEnforced,
-				Identifier:   `strftime({:format},{:time},{:m1},{:m2})`,
-				Params:       map[string]any{"format": "1", "time": "2", "m1": "3", "m2": "4"},
-			},
-			false,
+			nil,
+			true,
 		},
 
 		// -----------------------------------------------------------
@@ -444,23 +440,8 @@ func TestTokenFunctionsStrftime(t *testing.T) {
 				{Literal: "10", Type: fexpr.TokenText},
 			},
 			baseTokenResolver,
-			&ResolverResult{
-				NullFallback: NullFallbackEnforced,
-				Identifier:   `strftime({:format},{:time},{:m1},{:m2},{:m3},{:m4},{:m5},{:m6},{:m7},{:m8})`,
-				Params: map[string]any{
-					"format": "1",
-					"time":   "2",
-					"m1":     "3",
-					"m2":     "4",
-					"m3":     "5",
-					"m4":     "6",
-					"m5":     "7",
-					"m6":     "8",
-					"m7":     "9",
-					"m8":     "10",
-				},
-			},
-			false,
+			nil,
+			true, // modifiers are not supported
 		},
 		{
 			"> 10 args limit",
@@ -531,8 +512,6 @@ func TestTokenFunctionsStrftimeExec(t *testing.T) {
 		},
 		fexpr.Token{Literal: "%Y-%m", Type: fexpr.TokenText},
 		fexpr.Token{Literal: "2026-01-02 01:02:03.456Z", Type: fexpr.TokenText},
-		fexpr.Token{Literal: "+1 years", Type: fexpr.TokenText},
-		fexpr.Token{Literal: "+5 months", Type: fexpr.TokenText},
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -548,7 +527,9 @@ func TestTokenFunctionsStrftimeExec(t *testing.T) {
 		t.Fatalf("Expected exactly 1 column value as result, got %v", column)
 	}
 
-	expected := "2027-06"
+	// note: the SQLite date modifiers ("+1 years", "+5 months") have no
+	// Postgres counterpart and are rejected, so the raw date is formatted
+	expected := "2026-01"
 	if column[0] != expected {
 		t.Fatalf("Expected date value %s, got %s", expected, column[0])
 	}

@@ -810,6 +810,12 @@ func (m *Record) CustomData() map[string]any {
 				continue
 			}
 
+			// the insertion-order column is an internal implementation
+			// detail and is never part of the record data
+			if k == rowidColumn {
+				continue
+			}
+
 			result[k] = v
 		}
 	}
@@ -1450,7 +1456,7 @@ func onRecordSaveExecute(e *RecordEvent) error {
 		}
 		for _, collection := range authCollections {
 			if e.Record.Collection().Id == collection.Id {
-				continue // skip current collection (sqlite will do the check for us)
+				continue // skip current collection (the db will do the check for us)
 			}
 			record, _ := e.App.FindRecordById(collection, e.Record.Id)
 			if record != nil {
