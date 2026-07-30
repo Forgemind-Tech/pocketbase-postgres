@@ -137,19 +137,16 @@ SQLite.
     ```
 
     ```bash
-    go mod edit -replace github.com/pocketbase/pocketbase=github.com/mwakalinga/pocketbase-postgres@postgres-port
+    go mod edit -replace github.com/pocketbase/pocketbase=github.com/mwakalinga/pocketbase-postgres@latest
     ```
 
     ```bash
     go mod tidy
     ```
 
-    > [!WARNING]
-    > Pin an explicit branch or tag. The PostgreSQL work lives on the
-    > `postgres-port` branch; while the default branch still holds the
-    > pre-port code, `@latest` resolves to **SQLite** and the replacement will
-    > appear to work while giving you the wrong database. Once `postgres-port`
-    > is merged into the default branch, `@latest` becomes safe.
+    > [!TIP]
+    > For reproducible builds, pin a specific tag or commit instead of
+    > `@latest`, eg. `...pocketbase-postgres@v0.39.9-postgres.1`.
 
     To develop against a local checkout instead, replace with the path:
     `go mod edit -replace github.com/pocketbase/pocketbase=../pocketbase-postgres`

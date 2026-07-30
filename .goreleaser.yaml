@@ -1,6 +1,6 @@
 version: 2
 
-project_name: pocketbase
+project_name: pocketbase-postgres
 
 dist: .builds
 
