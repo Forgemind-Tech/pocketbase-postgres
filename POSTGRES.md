@@ -159,8 +159,22 @@ differently than upstream.
 
 `CreateBackup` shells out to `pg_dump` and stores the result as
 `pb_database.sql` inside the backup archive alongside `pb_data`. `RestoreBackup`
-loads it back with `psql --single-transaction`. Both require the respective
-binary in `PATH`. Restore remains unsupported on Windows, as upstream.
+loads it back with `psql --single-transaction`. Restore remains unsupported on
+Windows, as upstream.
+
+By default both are looked up in `PATH`. If you run Postgres in Docker and don't
+want the client tools installed on the host, point them at the container instead:
+
+```bash
+export PB_PG_DUMP="docker compose exec -T postgres pg_dump"
+export PB_PSQL="docker compose exec -T postgres psql"
+```
+
+The dump is streamed over stdout/stdin rather than written with `--file`, so the
+archive lands on the host even when the tool runs inside a container. Two
+caveats: the value is split on spaces (use a wrapper script for paths containing
+spaces), and the connection string is resolved *by the tool*, so when it runs in
+the container the host and port in `PB_DB_URL` must be reachable from there.
 
 ### View collections
 

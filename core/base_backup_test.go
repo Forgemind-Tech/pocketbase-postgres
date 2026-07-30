@@ -173,7 +173,8 @@ func getEntryNames(entries []fs.DirEntry) []string {
 func requirePgTools(t *testing.T) {
 	t.Helper()
 
-	for _, bin := range []string{"pg_dump", "psql"} {
+	for _, argv := range [][]string{core.PgDumpCommand(), core.PgRestoreCommand()} {
+		bin := argv[0]
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s is not available in PATH - skipping the backup test", bin)
 		}

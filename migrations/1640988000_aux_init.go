@@ -12,6 +12,9 @@ func init() {
 			stmts := []string{
 				`CREATE TABLE IF NOT EXISTS {{_logs}} (
 					[[id]]      TEXT PRIMARY KEY DEFAULT ('r'||substr(md5(random()::text), 1, 14)) NOT NULL,
+					-- backs the "@rowid" sort key, same as the record tables (see
+					-- core.SyncRecordTableSchema) - the logs UI sorts by -@rowid
+					[[_rowid_]] BIGSERIAL NOT NULL,
 					[[level]]   INTEGER DEFAULT 0 NOT NULL,
 					[[message]] TEXT DEFAULT '' NOT NULL,
 					[[data]]    JSONB DEFAULT '{}' NOT NULL,
