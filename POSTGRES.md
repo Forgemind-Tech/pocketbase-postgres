@@ -5,10 +5,11 @@ no build tag to switch back.
 
 ## Requirements
 
-- Go 1.24+
+- Go 1.25+
 - PostgreSQL 16 or newer (the `IS JSON` predicate is used); the bundled compose
   file pins **18**
-- `pg_dump` / `psql` in `PATH`, but only if you use the backup feature
+- `pg_dump` / `psql`, but only if you use the backup feature — they do not have
+  to be installed on the host, see [Backups](#backups)
 
 ## Quick start
 

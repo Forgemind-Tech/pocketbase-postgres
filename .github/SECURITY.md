@@ -1,5 +1,21 @@
 # Security
 
+> [!IMPORTANT]
+> **This is a fork of PocketBase with SQLite replaced by PostgreSQL.**
+>
+> The policy below is the **upstream** project's and is kept because its
+> guidance still applies to the shared codebase. Route reports accordingly:
+>
+> - Vulnerabilities in **upstream PocketBase** → the upstream process below.
+> - Vulnerabilities in **this fork's PostgreSQL layer** (query building, the
+>   connection config, backups, migrations) → report them here instead.
+>   Upstream cannot act on code that does not exist in their repository.
+>
+> The "not considered security issues" section further down reflects upstream's
+> positions and applies to this fork as well, with one addition: the raw SQL
+> caveat about `dangerous*` arguments is unchanged by the port — table and
+> column names are still not parameterized.
+
 **Keep in mind that PocketBase is a non-commercial open source project, maintained entirely on volunteer basis (there is no company or dedicated team behind it), and there are no bounties!**
 
 If you want to responsibly report a security issue you'll have to reach out as a human to **support at pocketbase.io**.

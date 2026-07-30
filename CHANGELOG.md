@@ -1,3 +1,35 @@
+## Fork: PostgreSQL
+
+_Everything below this section is the upstream PocketBase changelog._
+
+This fork replaces SQLite with PostgreSQL. There is no SQLite code path left and
+no build tag to switch back. See [POSTGRES.md](POSTGRES.md) for the full details.
+
+- **Replaced SQLite with PostgreSQL** (`pgx/v5`). Data lives in the `public`
+  schema and logs in `pb_aux`, since Postgres cannot attach a second file the
+  way SQLite does. Retries are keyed on SQLSTATE, introspection runs against the
+  Postgres catalogs, and view collections are validated at startup instead of
+  failing later at runtime.
+
+- **Configurable connection credentials and a `db` command.** The connection
+  resolves from `--dbUrl`, then `PB_DB_URL`, then `db.json` in the data
+  directory, then built-in defaults matching the bundled compose file.
+  `db show` / `db set` / `db test` manage the stored settings and work even when
+  the database is unreachable.
+
+- **Backups use `pg_dump` / `psql`.** They do not need to be installed on the
+  host — `PB_PG_DUMP` and `PB_PSQL` can point at the Postgres container.
+
+- **Deliberate API breaks:** `strftime` is translated to `to_char` and errors on
+  unsupported substitutions rather than silently returning different data;
+  `@rowid` is backed by a real `BIGSERIAL` column; `LIKE` becomes `ILIKE`;
+  `COLLATE NOCASE` becomes `LOWER()` functional indexes; JSON extraction returns
+  text.
+
+- Removed the SQLite-era migrations (`v0.23_migrate*`, `normalize_indexes`) and
+  the pure-Go SQLite driver version check, since they cannot apply here.
+
+
 ## v0.39.9
 
 - Fixed `Shift + Click` range bulk selection not working in Firefox ([#7771](https://github.com/pocketbase/pocketbase/issues/7771))

@@ -42,7 +42,14 @@ This will start a web server on `http://localhost:8090` with the embedded prebui
 **Before making a PR to the main repository, it is a good idea to:**
 
 - Add unit/integration tests for your changes (we are using the standard `testing` go package).
-  To run the tests, you could execute (while in the root project directory):
+  The tests run against a real PostgreSQL instance, so start the dedicated test
+  server first (port 5433, separate from your dev database):
+
+  ```sh
+  docker-compose --profile test up -d postgres-test
+  ```
+
+  Then, while in the root project directory:
 
   ```sh
   go test ./...
@@ -50,6 +57,10 @@ This will start a web server on `http://localhost:8090` with the embedded prebui
   # or using the Makefile
   make test
   ```
+
+  Always pass `--profile test` to compose commands — omitting it removes the
+  `postgres-test` container and every test then fails with connection-refused
+  errors that look like code regressions. See [POSTGRES.md](POSTGRES.md#running-the-tests).
 
 - Run the linter - **golangci** ([see how to install](https://golangci-lint.run/usage/install/#local-installation)):
 
