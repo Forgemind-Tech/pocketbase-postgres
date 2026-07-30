@@ -147,11 +147,12 @@ func NewWithConfig(config Config) *PocketBase {
 }
 
 // Start starts the application, aka. registers the default system
-// commands (serve, superuser, version) and executes pb.RootCmd.
+// commands (serve, superuser, db, version) and executes pb.RootCmd.
 func (pb *PocketBase) Start() error {
 	// register system commands
 	pb.RootCmd.AddCommand(cmd.NewSuperuserCommand(pb))
 	pb.RootCmd.AddCommand(cmd.NewServeCommand(pb, !pb.hideStartBanner))
+	pb.RootCmd.AddCommand(cmd.NewDBCommand(pb))
 
 	return pb.Execute()
 }
@@ -227,7 +228,7 @@ func (pb *PocketBase) eagerParseFlags(config *Config) error {
 		&pb.dbUrlFlag,
 		"dbUrl",
 		config.DefaultDBUrl,
-		"the Postgres connection string \n(fallbacks to the PB_DB_URL env variable and then to the built-in default)",
+		"the Postgres connection string \n(fallbacks to the PB_DB_URL env variable, then to db.json \nin the data dir, then to the built-in defaults)",
 	)
 
 	pb.RootCmd.PersistentFlags().IntVar(
@@ -260,9 +261,17 @@ func (pb *PocketBase) skipBootstrap() bool {
 		return true // already bootstrapped
 	}
 
-	cmd, _, err := pb.RootCmd.Find(os.Args[1:])
+	resolved, _, err := pb.RootCmd.Find(os.Args[1:])
 	if err != nil {
 		return true // unknown command
+	}
+
+	// commands that manage the connection itself must not require a working
+	// one (eg. "db set" exists to fix an unreachable database)
+	for c := resolved; c != nil; c = c.Parent() {
+		if c.Annotations[cmd.SkipBootstrapAnnotation] != "" {
+			return true
+		}
 	}
 
 	for _, arg := range os.Args {
@@ -272,10 +281,10 @@ func (pb *PocketBase) skipBootstrap() bool {
 
 		// ensure that there is no user defined flag with the same name/shorthand
 		trimmed := strings.TrimLeft(arg, "-")
-		if len(trimmed) > 1 && cmd.Flags().Lookup(trimmed) == nil {
+		if len(trimmed) > 1 && resolved.Flags().Lookup(trimmed) == nil {
 			return true
 		}
-		if len(trimmed) == 1 && cmd.Flags().ShorthandLookup(trimmed) == nil {
+		if len(trimmed) == 1 && resolved.Flags().ShorthandLookup(trimmed) == nil {
 			return true
 		}
 	}

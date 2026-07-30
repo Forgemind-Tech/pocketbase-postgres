@@ -90,6 +90,13 @@ type BaseApp struct {
 	auxConcurrentDB     dbx.Builder
 	auxNonconcurrentDB  dbx.Builder
 
+	// dbUrlSource labels where the connection string came from (see ResolveDBUrl)
+	dbUrlSource string
+
+	// dbUrlErr holds a connection config error detected during NewBaseApp,
+	// which cannot fail, so that initDataDB can report it
+	dbUrlErr error
+
 	// app event hooks
 	onBootstrap     *hook.Hook[*BootstrapEvent]
 	onServe         *hook.Hook[*ServeEvent]
@@ -214,12 +221,17 @@ func NewBaseApp(config BaseAppConfig) *BaseApp {
 	if app.config.DBConnect == nil {
 		app.config.DBConnect = DefaultDBConnect
 	}
-	if app.config.DBUrl == "" {
-		if env := os.Getenv("PB_DB_URL"); env != "" {
-			app.config.DBUrl = env
-		} else {
-			app.config.DBUrl = DefaultDBUrl
-		}
+	// resolve the connection string (--dbUrl / PB_DB_URL / db.json / defaults)
+	//
+	// note: NewBaseApp cannot fail, so a malformed db.json is remembered and
+	// reported by initDataDB instead of being silently replaced with the
+	// defaults, which would quietly connect to the wrong database
+	dbUrl, dbUrlSource, err := ResolveDBUrl(app.config.DataDir, app.config.DBUrl)
+	if err != nil {
+		app.dbUrlErr = err
+	} else {
+		app.config.DBUrl = dbUrl
+		app.dbUrlSource = dbUrlSource
 	}
 	if app.config.DataSchema == "" {
 		app.config.DataSchema = DataSchemaName
@@ -607,6 +619,12 @@ func (app *BaseApp) DataDir() string {
 // DBUrl returns the Postgres connection string used by the app.
 func (app *BaseApp) DBUrl() string {
 	return app.config.DBUrl
+}
+
+// DBUrlSource returns a human readable label of where the connection string
+// came from (see [ResolveDBUrl]).
+func (app *BaseApp) DBUrlSource() string {
+	return app.dbUrlSource
 }
 
 // DataSchemaName returns the Postgres schema holding the collection/record tables.
@@ -1210,6 +1228,10 @@ func (app *BaseApp) OnBatchRequest() *hook.Hook[*BatchRequestEvent] {
 // -------------------------------------------------------------------
 
 func (app *BaseApp) initDataDB() error {
+	if app.dbUrlErr != nil {
+		return app.dbUrlErr
+	}
+
 	dsn, err := dsnWithSearchPath(app.config.DBUrl, app.config.DataSchema)
 	if err != nil {
 		return err
@@ -1222,6 +1244,12 @@ func (app *BaseApp) initDataDB() error {
 	concurrentDB.DB().SetMaxOpenConns(app.config.DataMaxOpenConns)
 	concurrentDB.DB().SetMaxIdleConns(app.config.DataMaxIdleConns)
 	concurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
+
+	// dbx.Open is lazy, so without an explicit check the first failure would
+	// surface as an opaque dial error from somewhere inside the migrations
+	if err := concurrentDB.DB().Ping(); err != nil {
+		return app.newDBConnectionError(err)
+	}
 
 	nonconcurrentDB, err := app.config.DBConnect(dsn)
 	if err != nil {

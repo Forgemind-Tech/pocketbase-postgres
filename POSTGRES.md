@@ -29,11 +29,54 @@ Resolution order, first match wins:
 
 1. `--dbUrl` flag
 2. `PB_DB_URL` environment variable
-3. the built-in default above
+3. `db.json` in the data directory (managed by the `db` command below)
+4. the built-in defaults
 
 ```bash
 go run ./examples/base serve --dbUrl "postgres://user:pass@db.example.com:5432/pocketbase?sslmode=require"
 ```
+
+The built-in defaults are `pocketbase:pocketbase@localhost:5432/pocketbase`
+with `sslmode=disable`, matching the bundled compose file — so a fresh checkout
+runs with no configuration at all.
+
+### The `db` command
+
+For a persistent change without managing env variables:
+
+```bash
+pocketbase db show
+```
+
+```bash
+pocketbase db set --host db.internal --port 5432 --user app --password secret --dbName app
+```
+
+```bash
+pocketbase db test
+```
+
+`set` updates **only the flags you pass**, leaving the rest untouched, and warns
+if a higher-priority source is currently overriding the saved values. `show`
+masks the password. `test` opens a real connection and reports the server
+version.
+
+These commands deliberately **skip bootstrap** — they exist to fix an
+unreachable database, so they must not require a working one first.
+
+For connection strings the individual fields can't express (client
+certificates, extra libpq parameters), `--url` stores one verbatim and takes
+precedence over the other fields; `--clearUrl` removes it again.
+
+> **Security:** `db.json` stores the password in plain text. It is written with
+> owner-only permissions, but Go only maps the read-only bit on Windows, so the
+> mode has no effect there. Where a secret store is available, prefer
+> `PB_DB_URL` — it takes precedence over the file and never touches disk.
+
+A malformed or invalid `db.json` is reported as a startup error rather than
+being silently replaced by the defaults, which would quietly connect to the
+wrong database. Connection failures now name the connection string in use
+(password masked), where it came from, and how to change it.
 
 ## Schema layout
 
@@ -59,6 +102,11 @@ docker-compose --profile test up -d postgres-test
 ```bash
 go test ./...
 ```
+
+> Always pass `--profile test` when running compose commands. A plain
+> `docker-compose up -d postgres` treats the profile-gated `postgres-test`
+> service as an orphan and **removes** it, after which the whole suite fails
+> with connection-refused errors that look like code regressions.
 
 Override the target with `PB_TEST_DB_URL` if needed.
 
