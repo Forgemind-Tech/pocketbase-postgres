@@ -158,18 +158,61 @@ SQLite.
 
 _For the framework API itself, upstream's [Extend with Go](https://pocketbase.io/docs/go-overview/) guide still applies._
 
-### Building and running the repo main.go example
+### Building for production
 
-0. [Install Go 1.25+](https://go.dev/doc/install) (_if you haven't already_)
-1. Clone the repo
-2. Navigate to `examples/base`
-3. Run `GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build`
-   (_https://go.dev/doc/install/source#environment_)
-4. Start the created executable by running `./base serve`
+```bash
+make build              # host platform  -> .builds/pocketbase
+make build-linux        # linux/amd64    -> .builds/pocketbase-linux-amd64
+make build-linux-arm64  # linux/arm64    -> .builds/pocketbase-linux-arm64
+```
+
+Without `make` (eg. on Windows), the same build directly:
+
+```bash
+CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X github.com/pocketbase/pocketbase.Version=$(git describe --tags --always)" -o .builds/pocketbase ./examples/base
+```
+
+`-s -w` strips the symbol table and DWARF data, `-trimpath` removes local
+filesystem paths, and the version is stamped from `git describe` (override with
+`make build VERSION=v1.2.3`).
+
+The admin dashboard is compiled into the binary from `ui/dist`, which is
+committed — no Node build step is needed to produce a working server.
 
 The Postgres driver (`pgx`) is pure Go, so unlike upstream there is no
-driver-specific build target list — `CGO_ENABLED=0` cross-compiles to any
-platform Go itself supports.
+driver-specific build target list: `CGO_ENABLED=0` produces a statically linked
+binary and cross-compiles to any platform Go itself supports.
+
+### Running in production
+
+The binary needs nothing but a reachable PostgreSQL:
+
+```bash
+PB_DB_URL="postgres://user:pass@db.internal:5432/pocketbase?sslmode=require" \
+  ./pocketbase serve --http 0.0.0.0:8090
+```
+
+Checklist:
+
+- **Set the connection explicitly.** The built-in defaults point at
+  `localhost:5432` with the credentials `pocketbase:pocketbase` — convenient
+  for local development, wrong for production. Use `PB_DB_URL` (never written
+  to disk) or `pocketbase db set`.
+- **Use `sslmode=require`** or stricter for any non-local database.
+- **Set `--encryptionEnv`** to the name of an env variable holding a 32
+  character key, so that stored settings (SMTP and S3 credentials) are
+  encrypted at rest.
+- **Terminate TLS.** Passing a domain enables automatic Let's Encrypt
+  certificates (`./pocketbase serve yourdomain.com`), or put a reverse proxy in
+  front and keep the server on `--http`.
+- **Back up the database, not just `pb_data`.** This is the big operational
+  change from upstream: records, collections and settings now live in
+  PostgreSQL, while `pb_data` holds only uploaded files and generated backups.
+  Copying `pb_data` alone no longer captures your data. See
+  [POSTGRES.md](POSTGRES.md#backups).
+- **Note the default data directory** is resolved next to the executable, so a
+  binary in `.builds/` uses `.builds/pb_data`. Pass `--dir` explicitly in
+  deployments.
 
 ### Testing
 
