@@ -1,7 +1,9 @@
 package apis_test
 
 import (
+	"fmt"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,80 +76,90 @@ func TestDefaultRateLimitMiddleware(t *testing.T) {
 	}
 
 	scenarios := []struct {
-		url            string
-		wait           float64 // ms
+		url string
+
+		// freshWindow starts this request at the beginning of a new limiter
+		// window, which resets the counter for its rule.
+		freshWindow bool
+
 		authenticated  bool
 		expectedStatus int
 	}{
-		{"/norate", 0, false, 200},
-		{"/norate", 0, false, 200},
-		{"/norate", 0, false, 200},
-		{"/norate", 0, false, 200},
-		{"/norate", 0, false, 200},
+		{"/norate", false, false, 200},
+		{"/norate", false, false, 200},
+		{"/norate", false, false, 200},
+		{"/norate", false, false, 200},
+		{"/norate", false, false, 200},
 
-		{"/rate/a", 0, false, 200},
-		{"/rate/a", 900, false, 200}, // (fixed window check) wait enough to ensure that it can't fit more than 2 requests in 1s
-		{"/rate/a", 900, false, 200},
-		{"/rate/a", 0, false, 200},
-		{"/rate/a", 0, false, 429},
-		{"/rate/a", 0, false, 429},
-		{"/rate/a", 1000, false, 200},
-		{"/rate/a", 0, false, 200},
-		{"/rate/a", 0, false, 429},
+		// "/rate/" rule, 2 requests per window
+		{"/rate/a", true, false, 200},
+		{"/rate/a", true, false, 200},
+		{"/rate/a", true, false, 200},
+		{"/rate/a", false, false, 200},
+		{"/rate/a", false, false, 429},
+		{"/rate/a", false, false, 429},
+		{"/rate/a", true, false, 200},
+		{"/rate/a", false, false, 200},
+		{"/rate/a", false, false, 429},
 
-		{"/rate/b", 0, false, 200},
-		{"/rate/b", 0, false, 200},
-		{"/rate/b", 0, false, 200},
-		{"/rate/b", 0, false, 429},
-		{"/rate/b", 1000, false, 200},
-		{"/rate/b", 0, false, 200},
-		{"/rate/b", 0, false, 200},
-		{"/rate/b", 0, false, 429},
+		// "/rate/b" rule, 3 requests per window
+		{"/rate/b", true, false, 200},
+		{"/rate/b", false, false, 200},
+		{"/rate/b", false, false, 200},
+		{"/rate/b", false, false, 429},
+		{"/rate/b", true, false, 200},
+		{"/rate/b", false, false, 200},
+		{"/rate/b", false, false, 200},
+		{"/rate/b", false, false, 429},
 
 		// "auth" with guest (should fallback to the /rate/ rule)
-		{"/rate/auth", 0, false, 200},
-		{"/rate/auth", 0, false, 200},
-		{"/rate/auth", 0, false, 429},
-		{"/rate/auth", 0, false, 429},
+		{"/rate/auth", true, false, 200},
+		{"/rate/auth", false, false, 200},
+		{"/rate/auth", false, false, 429},
+		{"/rate/auth", false, false, 429},
 
 		// "auth" rule with regular user (should match the /rate/auth rule)
-		{"/rate/auth", 0, true, 200},
-		{"/rate/auth", 0, true, 429},
-		{"/rate/auth", 0, true, 429},
+		{"/rate/auth", true, true, 200},
+		{"/rate/auth", false, true, 429},
+		{"/rate/auth", false, true, 429},
 
 		// "guest" with guest (should match the /rate/guest rule)
-		{"/rate/guest", 0, false, 200},
-		{"/rate/guest", 0, false, 429},
-		{"/rate/guest", 0, false, 429},
+		{"/rate/guest", true, false, 200},
+		{"/rate/guest", false, false, 429},
+		{"/rate/guest", false, false, 429},
 
 		// "guest" rule with regular user (should fallback to the /rate/ rule)
-		{"/rate/guest", 1000, true, 200},
-		{"/rate/guest", 0, true, 200},
-		{"/rate/guest", 0, true, 429},
-		{"/rate/guest", 0, true, 429},
+		{"/rate/guest", true, true, 200},
+		{"/rate/guest", false, true, 200},
+		{"/rate/guest", false, true, 429},
+		{"/rate/guest", false, true, 429},
 	}
 
-	for _, s := range scenarios {
-		t.Run(s.url, func(t *testing.T) {
+	// built once: creating it costs a db round trip and a token signing, and
+	// doing that per request would eat into the limiter window the batch is
+	// supposed to fit inside
+	authRecord, err := app.FindAuthRecordByEmail("users", "test@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authToken, err := authRecord.NewAuthToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for i, s := range scenarios {
+		// the index keeps the subtest names unique, so a failure points at a
+		// specific row instead of an anonymous "#06"
+		t.Run(fmt.Sprintf("%02d_%s", i, strings.TrimPrefix(s.url, "/")), func(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequest("GET", s.url, nil)
 
 			if s.authenticated {
-				auth, err := app.FindAuthRecordByEmail("users", "test@example.com")
-				if err != nil {
-					t.Fatal(err)
-				}
-
-				token, err := auth.NewAuthToken()
-				if err != nil {
-					t.Fatal(err)
-				}
-
-				req.Header.Add("Authorization", token)
+				req.Header.Add("Authorization", authToken)
 			}
 
-			if s.wait > 0 {
-				time.Sleep(time.Duration(s.wait) * time.Millisecond)
+			if s.freshWindow {
+				waitForFreshRateLimitWindow()
 			}
 
 			mux.ServeHTTP(rec, req)
@@ -159,6 +171,20 @@ func TestDefaultRateLimitMiddleware(t *testing.T) {
 			}
 		})
 	}
+}
+
+// waitForFreshRateLimitWindow blocks until just after the next second boundary.
+//
+// The limiter uses a fixed window keyed on time.Now().Unix() and the rules in
+// these tests use a 1s interval, so crossing a boundary always resets the
+// counter. Batches of requests are asserted as a group ("this one passes, the
+// next is rejected"), which only holds if the whole batch lands in one window.
+// Starting at a boundary gives the batch a full second instead of leaving it to
+// chance how much of the current one is left - the previous fixed sleeps left a
+// batch straddling a boundary roughly one run in three.
+func waitForFreshRateLimitWindow() {
+	now := time.Now()
+	time.Sleep(time.Until(now.Truncate(time.Second).Add(time.Second)) + 5*time.Millisecond)
 }
 
 func TestDefaultRateLimitMiddlewareSkipChecks(t *testing.T) {
