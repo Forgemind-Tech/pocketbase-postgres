@@ -212,12 +212,24 @@ loads it back with `psql --single-transaction`. Restore remains unsupported on
 Windows, as upstream.
 
 By default both are looked up in `PATH`. If you run Postgres in Docker and don't
-want the client tools installed on the host, point them at the container instead:
+want the client tools installed on the host, point PocketBase at the copies
+inside the container:
 
 ```bash
-export PB_PG_DUMP="docker compose exec -T postgres pg_dump"
-export PB_PSQL="docker compose exec -T postgres psql"
+pocketbase db set --pgDump "docker exec -i pocketbase-postgres pg_dump" --psql "docker exec -i pocketbase-postgres psql"
 ```
+
+This is stored in `db.json`, so it survives restarts and applies to backups
+triggered from the **admin UI** — which is the common case, and one that an
+environment variable cannot serve, since it would have to be set before the
+server started.
+
+Resolution order for the tools: `PB_PG_DUMP` / `PB_PSQL` env variables, then
+`db.json`, then `PATH`. `pocketbase db show` prints what is actually resolved.
+
+> Prefer `docker exec -i <container>` over `docker compose exec`: the compose
+> form only works when the server's working directory contains the compose
+> file, which is rarely true for a deployed binary.
 
 The dump is streamed over stdout/stdin rather than written with `--file`, so the
 archive lands on the host even when the tool runs inside a container. Two

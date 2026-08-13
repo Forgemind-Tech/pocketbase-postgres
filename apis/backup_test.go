@@ -892,7 +892,7 @@ func ensureNoBackups(t testing.TB, app *tests.TestApp) {
 func requirePgTools(t *testing.T) {
 	t.Helper()
 
-	for _, argv := range [][]string{core.PgDumpCommand(), core.PgRestoreCommand()} {
+	for _, argv := range [][]string{core.PgDumpCommand(""), core.PgRestoreCommand("")} {
 		bin := argv[0]
 		if _, err := exec.LookPath(bin); err != nil {
 			t.Skipf("%s is not available in PATH - skipping the backup test", bin)

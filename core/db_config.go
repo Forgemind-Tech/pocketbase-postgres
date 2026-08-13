@@ -50,6 +50,17 @@ type DBConfig struct {
 	// It is an escape hatch for connection strings that cannot be expressed
 	// with the fields above (eg. client certificates or extra libpq params).
 	Url string `json:"url,omitempty"`
+
+	// PgDump and Psql override the commands used by the backup feature.
+	//
+	// They are stored here rather than only read from the environment because
+	// backups are usually triggered from the admin UI of an already running
+	// server, long after any env variable could have been set. The typical
+	// value runs the tool inside the Postgres container:
+	//
+	//	"docker exec -i pocketbase-postgres pg_dump"
+	PgDump string `json:"pgDump,omitempty"`
+	Psql   string `json:"psql,omitempty"`
 }
 
 // DefaultDBConfig returns the built-in connection defaults.
