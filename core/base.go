@@ -97,6 +97,14 @@ type BaseApp struct {
 	// which cannot fail, so that initDataDB can report it
 	dbUrlErr error
 
+	// deferredDeletes holds file deletions postponed during a backup
+	//
+	// note: a pointer, because BaseApp is shallow-copied to build the
+	// transaction and no-hooks clones - a by-value mutex would both be copied
+	// (which vet rejects) and give each clone its own queue, so deletions
+	// enqueued through a txApp would be dropped
+	deferredDeletes *deferredDeletes
+
 	// app event hooks
 	onBootstrap     *hook.Hook[*BootstrapEvent]
 	onServe         *hook.Hook[*ServeEvent]
@@ -210,6 +218,7 @@ type BaseApp struct {
 // To initialize the app, you need to call `app.Bootstrap()`.
 func NewBaseApp(config BaseAppConfig) *BaseApp {
 	app := &BaseApp{
+		deferredDeletes:     &deferredDeletes{},
 		settings:            newDefaultSettings(),
 		store:               store.New[string, any](nil),
 		cron:                cron.New(),
@@ -1403,6 +1412,23 @@ func (app *BaseApp) registerBaseHooks() {
 						slog.String("error", err.Error()),
 					)
 				} else {
+					// a backup in progress has already dumped this record, so
+					// removing its files now would restore as a broken
+					// attachment - postpone until the backup finishes
+					if app.DeferFileDeleteDuringBackup(func() {
+						defer deleteSem.Release(1)
+
+						if err := deletePrefix(prefix); err != nil {
+							app.Logger().Error(
+								"Failed to delete storage prefix deferred during a backup",
+								slog.String("prefix", prefix),
+								slog.String("error", err.Error()),
+							)
+						}
+					}) {
+						return nil
+					}
+
 					// run in the background for "optimistic" delete to avoid blocking the delete transaction
 					routine.FireAndForget(func() {
 						defer deleteSem.Release(1)

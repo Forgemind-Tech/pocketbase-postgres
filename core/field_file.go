@@ -583,6 +583,25 @@ func (f *FileField) deleteFilesByNamesList(ctx context.Context, app App, record 
 		return filenames, errors.New("the record doesn't have an id")
 	}
 
+	// A backup in progress has already dumped this record with these files
+	// still attached, so removing them now would restore as broken
+	// attachments. Postpone instead - the retry below runs once the backup
+	// window has closed, at which point the deferral is a no-op and the
+	// deletion proceeds normally.
+	pending := append([]string(nil), filenames...)
+	if app.DeferFileDeleteDuringBackup(func() {
+		failed, err := f.deleteFilesByNamesList(context.Background(), app, record, pending)
+		if err != nil {
+			app.Logger().Warn(
+				"Failed to delete files postponed during a backup",
+				"error", err,
+				"failedToDelete", failed,
+			)
+		}
+	}) {
+		return nil, nil
+	}
+
 	fsys, err := app.NewFilesystem()
 	if err != nil {
 		return filenames, err

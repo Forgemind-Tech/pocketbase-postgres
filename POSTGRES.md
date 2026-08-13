@@ -256,6 +256,38 @@ caveats: the value is split on spaces (use a wrapper script for paths containing
 spaces), and the connection string is resolved *by the tool*, so when it runs in
 the container the host and port in `PB_DB_URL` must be reachable from there.
 
+#### Backups do not block writes
+
+Upstream wrapped the backup in a transaction to freeze writes while the SQLite
+file inside `pb_data` was copied. The database is no longer in there, so that
+pause bought nothing and has been removed.
+
+`pg_dump` needs no coordination of its own — it reads a consistent MVCC
+snapshot, so concurrent writes neither affect it nor wait for it.
+
+What does need care is that an archive holds **two** things that must agree: the
+SQL dump, taken first, and the files in `pb_data`, archived a moment later. The
+skew is only dangerous in one direction:
+
+| Happens between dump and archive | Result |
+| --- | --- |
+| A record and its file are **created** | File in the archive with no matching record — a harmless orphan |
+| A record is **deleted**, or its file **replaced** | The dump still references a file the archive no longer has — a **broken attachment** |
+
+The second case is prevented by **postponing file deletions** while a backup is
+running. File deletion here was already asynchronous and best-effort
+("optimistic delete", failures logged and ignored), so delaying it fits the
+existing contract; the queue is drained as soon as the backup finishes. Nothing
+waits on a request path.
+
+Two things still worth knowing:
+
+- Only *PocketBase's* deletions are postponed. Anything else touching that
+  storage keeps deleting.
+- `pg_dump` does genuinely block **DDL**: it holds `ACCESS SHARE` on every
+  table, so a collection schema change started during a backup waits for it,
+  and a backup started during one waits in turn.
+
 ### View collections
 
 View queries are stored SQL authored against the database. Any that fail to

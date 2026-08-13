@@ -80,6 +80,11 @@ type App interface {
 	// SaveBackupToolsConfig persists the pg_dump/psql command overrides.
 	SaveBackupToolsConfig(config BackupToolsConfig) error
 
+	// DeferFileDeleteDuringBackup postpones a file deletion until the running
+	// backup finishes, so that the archived files cannot lose something the
+	// SQL dump still references. It reports whether op was postponed.
+	DeferFileDeleteDuringBackup(op func()) bool
+
 	// EncryptionEnv returns the name of the app secret env key
 	// (currently used primarily for optional settings encryption but this may change in the future).
 	EncryptionEnv() string
