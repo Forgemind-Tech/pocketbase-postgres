@@ -20,6 +20,11 @@ Everything else PocketBase offers is unchanged:
 https://pocketbase.io/docs.** For everything specific to this fork — connection
 settings, behavioural differences, backups — see **[POSTGRES.md](POSTGRES.md)**.
 
+Fork-specific changes, and a record of what was taken from each upstream
+release, live in **[CHANGELOG_FORK.md](CHANGELOG_FORK.md)**. `CHANGELOG.md` is
+kept byte-identical to upstream so that pulling their changes never conflicts
+there.
+
 > [!WARNING]
 > PocketBase is under active development and full backward compatibility is not
 > guaranteed before v1.0.0. This fork adds its own deliberate API breaks on top

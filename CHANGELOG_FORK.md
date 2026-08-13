@@ -1,0 +1,88 @@
+# Fork changelog
+
+Changes specific to this PostgreSQL fork, and a record of what was taken from
+each upstream release.
+
+`CHANGELOG.md` is kept **byte-identical to upstream** so that pulling upstream
+changes never conflicts there — fork notes belong here instead.
+
+See [POSTGRES.md](POSTGRES.md) for how the port actually works.
+
+---
+
+## Upstream merges
+
+### v0.39.10 — partially merged
+
+Cherry-picked rather than merged wholesale.
+
+**Taken**
+
+- `pocketbase.go`: replaced the two `routine.FireAndForget` shutdown goroutines
+  with plain `go func()`. The then-unused `tools/routine` import was dropped —
+  upstream still needs it for the modernc SQLite deps check, which this fork
+  does not have, so the patch applied cleanly but did not compile until the
+  import was removed.
+- `core/field_file.go`: guard against nil `*filesystem.File` values in
+  `toSliceValue`, plus the accompanying test cases.
+- `ui/**`: dashboard updates (logs chart and list). `ui/dist` matches upstream
+  v0.39.10 exactly.
+
+**Deliberately not taken**
+
+- `go.mod` / `go.sum`: `modernc.org/sqlite` v1.54 → v1.55. This fork has no
+  SQLite dependency and the bump would reintroduce one.
+- `modernc_versions_check.go`: deleted by the port.
+- `CHANGELOG_16_22.md`: not present in this fork.
+
+---
+
+## Fork changes
+
+### Connection pools
+
+Reads and writes use separate pools, sized as a set to fit a stock Postgres
+(`max_connections = 100`): 40 data read, 20 data write, 8 aux read, 4 aux write.
+
+The write pool was previously capped at a **single** connection — a SQLite
+workaround, since SQLite allows only one writer. On Postgres it served only to
+serialise every write in the application. Lifting it took a benchmark of 100
+concurrent 20 ms writes from **2.28 s to 142 ms**.
+
+PocketBase now warns at startup if the four pools together exceed what the
+server accepts; the previous defaults could open 142 connections against a
+100-connection server.
+
+### Backups
+
+- Run `pg_dump` / `psql` instead of copying a database file. The tools do not
+  have to be installed on the host: the commands are resolved from
+  `PB_PG_DUMP` / `PB_PSQL`, then the database, then `PATH`, then the bundled
+  Postgres container.
+- Backups **do not block writes**. `pg_dump` reads a consistent MVCC snapshot,
+  and file deletions are postponed while a backup runs so the archived files
+  cannot lose something the dump still references.
+
+### Connection configuration
+
+Resolves from `--dbUrl`, then `PB_DB_URL`, then `db.json` in the data directory,
+then built-in defaults matching the bundled compose file. `db show` / `db set` /
+`db test` manage the stored settings and work even when the database is
+unreachable, since that is when they are needed.
+
+### The port itself
+
+Replaced SQLite with PostgreSQL (`pgx/v5`). Data lives in the `public` schema
+and logs in `pb_aux`, since Postgres cannot attach a second file the way SQLite
+does. Retries are keyed on SQLSTATE, introspection runs against the Postgres
+catalogs, and view collections are validated at startup rather than failing
+later at runtime.
+
+**Deliberate API breaks:** `strftime` is translated to `to_char` and errors on
+unsupported substitutions rather than silently returning different data;
+`@rowid` is backed by a real `BIGSERIAL` column; `LIKE` becomes `ILIKE`;
+`COLLATE NOCASE` becomes `LOWER()` functional indexes; JSON extraction returns
+text.
+
+Removed the SQLite-era migrations (`v0.23_migrate*`, `normalize_indexes`) and
+the pure-Go SQLite driver version check, since neither can apply here.

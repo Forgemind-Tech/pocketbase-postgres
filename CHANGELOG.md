@@ -1,54 +1,11 @@
-## Fork: PostgreSQL
+## v0.39.10
 
-_Everything below this section is the upstream PocketBase changelog._
+- Reverted the auto panic recover handling for the cli commands to preserve the old behavior and allow panic to force exit with non-zero code ([#7781](https://github.com/pocketbase/pocketbase/issues/7781)).
+    _Proper command non-zero exit support will be available with the next v0.40/v0.41 release._
 
-This fork replaces SQLite with PostgreSQL. There is no SQLite code path left and
-no build tag to switch back. See [POSTGRES.md](POSTGRES.md) for the full details.
+- Minor UI improvements (added placeholder loader for the logs chart, npm dev deps update, etc.).
 
-- **Replaced SQLite with PostgreSQL** (`pgx/v5`). Data lives in the `public`
-  schema and logs in `pb_aux`, since Postgres cannot attach a second file the
-  way SQLite does. Retries are keyed on SQLSTATE, introspection runs against the
-  Postgres catalogs, and view collections are validated at startup instead of
-  failing later at runtime.
-
-- **Configurable connection credentials and a `db` command.** The connection
-  resolves from `--dbUrl`, then `PB_DB_URL`, then `db.json` in the data
-  directory, then built-in defaults matching the bundled compose file.
-  `db show` / `db set` / `db test` manage the stored settings and work even when
-  the database is unreachable.
-
-- **Backups use `pg_dump` / `psql`.** They do not need to be installed on the
-  host — `PB_PG_DUMP` and `PB_PSQL` can point at the Postgres container.
-
-- **Deliberate API breaks:** `strftime` is translated to `to_char` and errors on
-  unsupported substitutions rather than silently returning different data;
-  `@rowid` is backed by a real `BIGSERIAL` column; `LIKE` becomes `ILIKE`;
-  `COLLATE NOCASE` becomes `LOWER()` functional indexes; JSON extraction returns
-  text.
-
-- Removed the SQLite-era migrations (`v0.23_migrate*`, `normalize_indexes`) and
-  the pure-Go SQLite driver version check, since they cannot apply here.
-
-
-## v0.39.10 (partially merged)
-
-Upstream release, cherry-picked rather than merged wholesale. Taken:
-
-- `pocketbase.go`: replaced the two `routine.FireAndForget` shutdown goroutines
-  with plain `go func()`. The now-unused `tools/routine` import was dropped —
-  upstream still needs it for the modernc SQLite deps check, which this fork
-  does not have.
-- `core/field_file.go`: guard against nil `*filesystem.File` values in
-  `toSliceValue`, plus the accompanying test cases.
-- `ui/**`: dashboard updates (logs chart and list). `ui/dist` matches upstream
-  v0.39.10 exactly.
-
-Deliberately **not** taken:
-
-- `go.mod` / `go.sum`: `modernc.org/sqlite` v1.54 → v1.55. This fork has no
-  SQLite dependency and taking the bump would reintroduce one.
-- `modernc_versions_check.go`: deleted by the port.
-- `CHANGELOG_16_22.md`: not present in this fork.
+- Updated `modernc.org/sqlite` to v1.55.0 (doc changes).
 
 
 ## v0.39.9
