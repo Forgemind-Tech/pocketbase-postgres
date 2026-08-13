@@ -211,21 +211,40 @@ differently than upstream.
 loads it back with `psql --single-transaction`. Restore remains unsupported on
 Windows, as upstream.
 
-By default both are looked up in `PATH`. If you run Postgres in Docker and don't
-want the client tools installed on the host, point PocketBase at the copies
-inside the container:
+**With the bundled compose file this needs no configuration.** If the tools are
+not in `PATH` and the `pocketbase-postgres` container is running, PocketBase
+runs them inside it automatically. That covers the normal development setup —
+Postgres in Docker, nothing but Go on the host — and keeps working after the
+routine resets that wipe every other place the setting could live (`pb_data`
+deleted, or the database volume recreated by `docker compose down -v`).
+
+To point it somewhere else — a different container, a custom path, a wrapper
+script:
 
 ```bash
-pocketbase db set --pgDump "docker exec -i pocketbase-postgres pg_dump" --psql "docker exec -i pocketbase-postgres psql"
+pocketbase backup-tools --pgDump "docker exec -i pocketbase-postgres pg_dump" --psql "docker exec -i pocketbase-postgres psql"
 ```
 
-This is stored in `db.json`, so it survives restarts and applies to backups
-triggered from the **admin UI** — which is the common case, and one that an
-environment variable cannot serve, since it would have to be set before the
-server started.
+Run `pocketbase backup-tools` with no flags to print what currently resolves.
 
-Resolution order for the tools: `PB_PG_DUMP` / `PB_PSQL` env variables, then
-`db.json`, then `PATH`. `pocketbase db show` prints what is actually resolved.
+These are stored **in the database**, not in a file under `pb_data`. That matters
+for two reasons: backups are usually triggered from the admin UI of an already
+running server, long after any env variable could have been set; and `pb_data`
+is now disposable — records live in Postgres, so wiping it is a normal reset
+that must not silently break backups.
+
+Resolution order: `PB_PG_DUMP` / `PB_PSQL` env variables, then the database,
+then `PATH`, then the bundled `pocketbase-postgres` container if it is running.
+
+> The container fallback only applies when the tools are missing from `PATH`.
+> If you run your own Postgres *and* happen to have a container by that name,
+> set the commands explicitly so backups cannot target the wrong server.
+
+> **Why not the app settings?** The values are executed as host commands, so
+> exposing them through `PATCH /api/settings` would let any superuser run
+> arbitrary commands on the server. They are kept in their own `_params` row,
+> outside the settings payload, so changing them requires access to this CLI —
+> the same bar as before.
 
 > Prefer `docker exec -i <container>` over `docker compose exec`: the compose
 > form only works when the server's working directory contains the compose

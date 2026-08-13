@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -892,10 +893,16 @@ func ensureNoBackups(t testing.TB, app *tests.TestApp) {
 func requirePgTools(t *testing.T) {
 	t.Helper()
 
-	for _, argv := range [][]string{core.PgDumpCommand(""), core.PgRestoreCommand("")} {
-		bin := argv[0]
-		if _, err := exec.LookPath(bin); err != nil {
-			t.Skipf("%s is not available in PATH - skipping the backup test", bin)
+	// mirrors core's resolution minus the database layer, which is empty in
+	// tests - constructing an app here just to read it would be wasteful
+	for envKey, fallback := range map[string]string{"PB_PG_DUMP": "pg_dump", "PB_PSQL": "psql"} {
+		argv := strings.Fields(os.Getenv(envKey))
+		if len(argv) == 0 {
+			argv = []string{fallback}
+		}
+
+		if _, err := exec.LookPath(argv[0]); err != nil {
+			t.Skipf("%s is not available in PATH - skipping the backup test", argv[0])
 		}
 	}
 }

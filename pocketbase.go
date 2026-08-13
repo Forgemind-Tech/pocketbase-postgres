@@ -147,12 +147,13 @@ func NewWithConfig(config Config) *PocketBase {
 }
 
 // Start starts the application, aka. registers the default system
-// commands (serve, superuser, db, version) and executes pb.RootCmd.
+// commands (serve, superuser, db, backup-tools, version) and executes pb.RootCmd.
 func (pb *PocketBase) Start() error {
 	// register system commands
 	pb.RootCmd.AddCommand(cmd.NewSuperuserCommand(pb))
 	pb.RootCmd.AddCommand(cmd.NewServeCommand(pb, !pb.hideStartBanner))
 	pb.RootCmd.AddCommand(cmd.NewDBCommand(pb))
+	pb.RootCmd.AddCommand(cmd.NewBackupToolsCommand(pb))
 
 	return pb.Execute()
 }

@@ -73,6 +73,13 @@ type App interface {
 	// AuxSchemaName returns the Postgres schema holding the auxiliary (logs) tables.
 	AuxSchemaName() string
 
+	// BackupToolsConfig returns the stored pg_dump/psql command overrides
+	// used by the backup feature.
+	BackupToolsConfig() BackupToolsConfig
+
+	// SaveBackupToolsConfig persists the pg_dump/psql command overrides.
+	SaveBackupToolsConfig(config BackupToolsConfig) error
+
 	// EncryptionEnv returns the name of the app secret env key
 	// (currently used primarily for optional settings encryption but this may change in the future).
 	EncryptionEnv() string

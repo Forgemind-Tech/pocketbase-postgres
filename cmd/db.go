@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/fatih/color"
 	"github.com/pocketbase/pocketbase/core"
@@ -79,19 +78,13 @@ func dbShowCommand(app core.App) *cobra.Command {
 				color.HiBlack("note: %s takes precedence over %s", source, core.DBConfigFileName)
 			}
 
-			// resolved independently of how the connection itself resolved
-			fmt.Println()
-			fmt.Println("backup tools:")
-			fmt.Printf("  pg_dump:  %s\n", strings.Join(core.PgDumpCommand(app.DataDir()), " "))
-			fmt.Printf("  psql:     %s\n", strings.Join(core.PgRestoreCommand(app.DataDir()), " "))
-
 			return nil
 		},
 	}
 }
 
 func dbSetCommand(app core.App) *cobra.Command {
-	var host, user, password, dbName, sslMode, rawUrl, pgDump, psql string
+	var host, user, password, dbName, sslMode, rawUrl string
 	var port int
 	var clearUrl bool
 
@@ -127,8 +120,6 @@ func dbSetCommand(app core.App) *cobra.Command {
 				"dbName":   func() { config.DBName = dbName },
 				"sslMode":  func() { config.SSLMode = sslMode },
 				"url":      func() { config.Url = rawUrl },
-				"pgDump":   func() { config.PgDump = pgDump },
-				"psql":     func() { config.Psql = psql },
 			} {
 				if flags.Changed(name) {
 					apply()
@@ -174,12 +165,6 @@ func dbSetCommand(app core.App) *cobra.Command {
 	command.Flags().StringVar(&rawUrl, "url", "",
 		"full connection string, used verbatim and overriding every other field")
 	command.Flags().BoolVar(&clearUrl, "clearUrl", false, "removes a previously stored --url")
-	command.Flags().StringVar(&pgDump, "pgDump", "",
-		`command used to create backups (default "pg_dump" from PATH), `+
-			`eg. "docker exec -i pocketbase-postgres pg_dump"`)
-	command.Flags().StringVar(&psql, "psql", "",
-		`command used to restore backups (default "psql" from PATH), `+
-			`eg. "docker exec -i pocketbase-postgres psql"`)
 
 	return command
 }
