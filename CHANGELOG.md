@@ -30,6 +30,27 @@ no build tag to switch back. See [POSTGRES.md](POSTGRES.md) for the full details
   the pure-Go SQLite driver version check, since they cannot apply here.
 
 
+## v0.39.10 (partially merged)
+
+Upstream release, cherry-picked rather than merged wholesale. Taken:
+
+- `pocketbase.go`: replaced the two `routine.FireAndForget` shutdown goroutines
+  with plain `go func()`. The now-unused `tools/routine` import was dropped —
+  upstream still needs it for the modernc SQLite deps check, which this fork
+  does not have.
+- `core/field_file.go`: guard against nil `*filesystem.File` values in
+  `toSliceValue`, plus the accompanying test cases.
+- `ui/**`: dashboard updates (logs chart and list). `ui/dist` matches upstream
+  v0.39.10 exactly.
+
+Deliberately **not** taken:
+
+- `go.mod` / `go.sum`: `modernc.org/sqlite` v1.54 → v1.55. This fork has no
+  SQLite dependency and taking the bump would reintroduce one.
+- `modernc_versions_check.go`: deleted by the port.
+- `CHANGELOG_16_22.md`: not present in this fork.
+
+
 ## v0.39.9
 
 - Fixed `Shift + Click` range bulk selection not working in Firefox ([#7771](https://github.com/pocketbase/pocketbase/issues/7771))

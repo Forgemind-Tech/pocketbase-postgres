@@ -14,7 +14,6 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/list"
 	"github.com/pocketbase/pocketbase/tools/osutils"
-	"github.com/pocketbase/pocketbase/tools/routine"
 	"github.com/spf13/cobra"
 
 	_ "github.com/pocketbase/pocketbase/migrations"
