@@ -30,11 +30,30 @@ import (
 )
 
 const (
-	DefaultDataMaxOpenConns int           = 120
-	DefaultDataMaxIdleConns int           = 15
-	DefaultAuxMaxOpenConns  int           = 20
-	DefaultAuxMaxIdleConns  int           = 3
-	DefaultQueryTimeout     time.Duration = 30 * time.Second
+	// Connection pool sizes.
+	//
+	// Reads and writes use separate pools. Under SQLite the write pool was
+	// hardcoded to a single connection, because SQLite permits only one writer
+	// and serialising through one connection avoided SQLITE_BUSY. Postgres has
+	// MVCC and row-level locking, so that cap only served to serialise every
+	// write in the application behind one connection.
+	//
+	// The totals are chosen to fit a stock Postgres, which allows 100
+	// connections with 3 reserved for superusers:
+	//
+	//	40 data read + 20 data write + 8 aux read + 4 aux write = 72
+	//
+	// leaving room for psql, pg_dump during a backup, and the SQL console.
+	// Raise them together with max_connections, or put a pooler in front.
+	DefaultDataMaxOpenConns      int           = 40
+	DefaultDataMaxIdleConns      int           = 10
+	DefaultDataWriteMaxOpenConns int           = 20
+	DefaultDataWriteMaxIdleConns int           = 5
+	DefaultAuxMaxOpenConns       int           = 8
+	DefaultAuxMaxIdleConns       int           = 2
+	DefaultAuxWriteMaxOpenConns  int           = 4
+	DefaultAuxWriteMaxIdleConns  int           = 2
+	DefaultQueryTimeout          time.Duration = 30 * time.Second
 
 	LocalStorageDirName       string = "storage"
 	LocalBackupsDirName       string = "backups"
@@ -59,18 +78,28 @@ type DBConnectFunc func(dsn string) (*dbx.DB, error)
 
 // BaseAppConfig defines a BaseApp configuration option
 type BaseAppConfig struct {
-	DBConnect        DBConnectFunc
-	DBUrl            string
-	DataSchema       string // defaults to core.DataSchemaName
-	AuxSchema        string // defaults to core.AuxSchemaName
-	DataDir          string
-	EncryptionEnv    string
-	QueryTimeout     time.Duration
+	DBConnect     DBConnectFunc
+	DBUrl         string
+	DataSchema    string // defaults to core.DataSchemaName
+	AuxSchema     string // defaults to core.AuxSchemaName
+	DataDir       string
+	EncryptionEnv string
+	QueryTimeout  time.Duration
+	// DataMaxOpenConns / DataMaxIdleConns size the read pool.
 	DataMaxOpenConns int
 	DataMaxIdleConns int
-	AuxMaxOpenConns  int
-	AuxMaxIdleConns  int
-	IsDev            bool
+
+	// DataWriteMaxOpenConns / DataWriteMaxIdleConns size the write pool, which
+	// also serves transactions. Keep the total of all four pools below the
+	// server's max_connections.
+	DataWriteMaxOpenConns int
+	DataWriteMaxIdleConns int
+
+	AuxMaxOpenConns      int
+	AuxMaxIdleConns      int
+	AuxWriteMaxOpenConns int
+	AuxWriteMaxIdleConns int
+	IsDev                bool
 }
 
 // ensures that the BaseApp implements the App interface.
@@ -259,6 +288,18 @@ func NewBaseApp(config BaseAppConfig) *BaseApp {
 	}
 	if app.config.AuxMaxIdleConns <= 0 {
 		app.config.AuxMaxIdleConns = DefaultAuxMaxIdleConns
+	}
+	if app.config.DataWriteMaxOpenConns <= 0 {
+		app.config.DataWriteMaxOpenConns = DefaultDataWriteMaxOpenConns
+	}
+	if app.config.DataWriteMaxIdleConns <= 0 {
+		app.config.DataWriteMaxIdleConns = DefaultDataWriteMaxIdleConns
+	}
+	if app.config.AuxWriteMaxOpenConns <= 0 {
+		app.config.AuxWriteMaxOpenConns = DefaultAuxWriteMaxOpenConns
+	}
+	if app.config.AuxWriteMaxIdleConns <= 0 {
+		app.config.AuxWriteMaxIdleConns = DefaultAuxWriteMaxIdleConns
 	}
 	if app.config.QueryTimeout <= 0 {
 		app.config.QueryTimeout = DefaultQueryTimeout
@@ -557,11 +598,14 @@ func (app *BaseApp) ConcurrentDB() dbx.Builder {
 
 // NonconcurrentDB returns the nonconcurrent app data.db builder instance.
 //
-// The returned db instance is limited only to a single open connection,
-// meaning that it can process only 1 db operation at a time (other queries queue up).
+// The returned db instance uses a separate, smaller pool than the read one
+// (see BaseAppConfig.DataWriteMaxOpenConns), since writes and transactions hold
+// a connection for longer.
 //
-// This method is used mainly internally and in the tests to execute write
-// (save/delete) db operations as it helps with minimizing the SQLITE_BUSY errors.
+// Note that under SQLite this pool was capped at a single connection, which
+// serialised every write in the application - a workaround for SQLite allowing
+// only one writer at a time. Postgres has MVCC and row-level locking, so writes
+// now run concurrently and a long transaction no longer blocks the others.
 //
 // Most users should use simply DB() as it will automatically
 // route the query execution to ConcurrentDB() or NonconcurrentDB().
@@ -606,11 +650,14 @@ func (app *BaseApp) AuxConcurrentDB() dbx.Builder {
 
 // AuxNonconcurrentDB returns the nonconcurrent app auxiliary.db builder instance.
 //
-// The returned db instance is limited only to a single open connection,
-// meaning that it can process only 1 db operation at a time (other queries queue up).
+// The returned db instance uses a separate, smaller pool than the read one
+// (see BaseAppConfig.DataWriteMaxOpenConns), since writes and transactions hold
+// a connection for longer.
 //
-// This method is used mainly internally and in the tests to execute write
-// (save/delete) db operations as it helps with minimizing the SQLITE_BUSY errors.
+// Note that under SQLite this pool was capped at a single connection, which
+// serialised every write in the application - a workaround for SQLite allowing
+// only one writer at a time. Postgres has MVCC and row-level locking, so writes
+// now run concurrently and a long transaction no longer blocks the others.
 //
 // Most users should use simply AuxDB() as it will automatically
 // route the query execution to AuxConcurrentDB() or AuxNonconcurrentDB().
@@ -1260,12 +1307,14 @@ func (app *BaseApp) initDataDB() error {
 		return app.newDBConnectionError(err)
 	}
 
+	app.warnIfConnectionBudgetExceeded(concurrentDB.DB())
+
 	nonconcurrentDB, err := app.config.DBConnect(dsn)
 	if err != nil {
 		return err
 	}
-	nonconcurrentDB.DB().SetMaxOpenConns(1)
-	nonconcurrentDB.DB().SetMaxIdleConns(1)
+	nonconcurrentDB.DB().SetMaxOpenConns(app.config.DataWriteMaxOpenConns)
+	nonconcurrentDB.DB().SetMaxIdleConns(app.config.DataWriteMaxIdleConns)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 
 	if app.IsDev() {
@@ -1334,8 +1383,8 @@ func (app *BaseApp) initAuxDB() error {
 	if err != nil {
 		return err
 	}
-	nonconcurrentDB.DB().SetMaxOpenConns(1)
-	nonconcurrentDB.DB().SetMaxIdleConns(1)
+	nonconcurrentDB.DB().SetMaxOpenConns(app.config.AuxWriteMaxOpenConns)
+	nonconcurrentDB.DB().SetMaxIdleConns(app.config.AuxWriteMaxIdleConns)
 	nonconcurrentDB.DB().SetConnMaxIdleTime(3 * time.Minute)
 
 	app.auxConcurrentDB = concurrentDB

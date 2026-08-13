@@ -116,13 +116,17 @@ func buildTemplateDB() error {
 	defer os.RemoveAll(tempDir)
 
 	app := core.NewBaseApp(core.BaseAppConfig{
-		DataDir:          filepath.Join(tempDir, "pb_data"),
-		DBUrl:            templateUrl,
-		EncryptionEnv:    "pb_test_env",
-		DataMaxOpenConns: 2,
-		DataMaxIdleConns: 1,
-		AuxMaxOpenConns:  1,
-		AuxMaxIdleConns:  1,
+		DataDir:               filepath.Join(tempDir, "pb_data"),
+		DBUrl:                 templateUrl,
+		EncryptionEnv:         "pb_test_env",
+		DataMaxOpenConns:      2,
+		DataMaxIdleConns:      1,
+		DataWriteMaxOpenConns: 2,
+		DataWriteMaxIdleConns: 1,
+		AuxMaxOpenConns:       1,
+		AuxMaxIdleConns:       1,
+		AuxWriteMaxOpenConns:  1,
+		AuxWriteMaxIdleConns:  1,
 	})
 
 	if err := app.Bootstrap(); err != nil {

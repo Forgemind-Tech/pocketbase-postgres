@@ -79,6 +79,40 @@ being silently replaced by the defaults, which would quietly connect to the
 wrong database. Connection failures now name the connection string in use
 (password masked), where it came from, and how to change it.
 
+## Connection pools
+
+Reads and writes use separate pools, and the defaults are sized to fit a stock
+Postgres (`max_connections = 100`, 3 reserved for superusers):
+
+| Pool | Max open | Idle | Config field |
+| --- | --- | --- | --- |
+| Data read | 40 | 10 | `DataMaxOpenConns` / `DataMaxIdleConns` |
+| Data write | 20 | 5 | `DataWriteMaxOpenConns` / `DataWriteMaxIdleConns` |
+| Aux read | 8 | 2 | `AuxMaxOpenConns` / `AuxMaxIdleConns` |
+| Aux write | 4 | 2 | `AuxWriteMaxOpenConns` / `AuxWriteMaxIdleConns` |
+
+**72 total**, leaving room for `psql`, `pg_dump` during a backup, and the SQL
+console. If you raise them, raise `max_connections` too — or put a pooler such
+as PgBouncer in front. PocketBase warns at startup when the four pools add up to
+more than the server accepts, because exhausting `max_connections` refuses
+connections outright rather than queueing them.
+
+> **Changed from upstream.** Under SQLite the write pool was capped at a
+> **single** connection, so every write in the application queued behind it.
+> That was a workaround for SQLite allowing only one writer at a time, and it
+> has no purpose on Postgres, which has MVCC and row-level locking. Lifting it
+> made a benchmark of 100 concurrent 20 ms writes drop from **2.28 s to 142 ms**.
+>
+> Two consequences worth knowing. Transactions no longer block each other, which
+> is what previously made a backup freeze all writes. And deadlocks are now
+> possible between transactions that touch rows in different orders — Postgres
+> detects them and returns SQLSTATE `40P01`, which is already in the retry list.
+>
+> Note this does not introduce data races that did not exist before: with a pool
+> of one, statements from different goroutines still interleaved, so the
+> read-then-write races upstream documents in `SECURITY.md` were never prevented
+> by the cap. The window is wider now.
+
 ## Schema layout
 
 Both stores live in one database, since Postgres cannot attach a second file the

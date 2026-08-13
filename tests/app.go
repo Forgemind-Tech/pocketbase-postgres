@@ -168,6 +168,21 @@ func NewTestAppWithConfig(config core.BaseAppConfig) (*TestApp, error) {
 	if config.AuxMaxIdleConns == 0 {
 		config.AuxMaxIdleConns = 1
 	}
+	// the write pools must be pinned small too: the suite runs many apps in
+	// parallel and each would otherwise inherit the production defaults,
+	// exhausting the test server's max_connections
+	if config.DataWriteMaxOpenConns == 0 {
+		config.DataWriteMaxOpenConns = 3
+	}
+	if config.DataWriteMaxIdleConns == 0 {
+		config.DataWriteMaxIdleConns = 1
+	}
+	if config.AuxWriteMaxOpenConns == 0 {
+		config.AuxWriteMaxOpenConns = 2
+	}
+	if config.AuxWriteMaxIdleConns == 0 {
+		config.AuxWriteMaxIdleConns = 1
+	}
 
 	app := core.NewBaseApp(config)
 
