@@ -42,6 +42,56 @@ builds:
       - goos: darwin
         goarch: ppc64le
 
+# Container images published to the GitHub Container Registry.
+#
+# One image per architecture, then a manifest that joins them so that
+# "docker pull ghcr.io/mwakalinga/pocketbase-postgres:<tag>" resolves to the
+# right one. goreleaser skips pushing for --snapshot builds.
+dockers:
+  - id: image_amd64
+    ids: [build_noncgo]
+    goos: linux
+    goarch: amd64
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    image_templates:
+      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-amd64"
+      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-amd64"
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+  - id: image_arm64
+    ids: [build_noncgo]
+    goos: linux
+    goarch: arm64
+    dockerfile: Dockerfile.goreleaser
+    use: buildx
+    image_templates:
+      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-arm64"
+      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-arm64"
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source={{ .GitURL }}"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+docker_manifests:
+  - name_template: "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-amd64"
+      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/mwakalinga/pocketbase-postgres:latest"
+    image_templates:
+      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-amd64"
+      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-arm64"
+
 release:
   draft: true
 

@@ -1,0 +1,15 @@
+# keep the build context small and reproducible
+.git
+.github
+.builds
+pb_data
+pb_public
+*.md
+!go.mod
+!go.sum
+ui/node_modules
+ui/.svelte-kit
+.env
+.vscode
+.idea
+coverage.out

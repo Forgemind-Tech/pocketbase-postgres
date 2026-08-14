@@ -21,3 +21,6 @@ LICENSE.html
 
 # local runtime data dir
 /pb_data/
+
+# local deployment secrets
+/.env

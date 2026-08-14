@@ -188,6 +188,68 @@ The Postgres driver (`pgx`) is pure Go, so unlike upstream there is no
 driver-specific build target list: `CGO_ENABLED=0` produces a statically linked
 binary and cross-compiles to any platform Go itself supports.
 
+### Deploying with Docker (recommended)
+
+A production bundle ships the app and PostgreSQL together:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` — at minimum `POSTGRES_PASSWORD` and the 32-character
+`PB_ENCRYPTION_KEY` — then:
+
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+The dashboard is on `http://localhost:8090/_/`. Create the first superuser with:
+
+```bash
+docker compose -f docker-compose.prod.yml exec pocketbase pb superuser upsert you@example.com yourpassword
+```
+
+Use `pb` rather than `pocketbase` for CLI commands: `docker compose exec`
+bypasses the image's `CMD`, so the bare binary would run without `--dir` and
+`--encryptionEnv` and fail with a confusing `missing encryption key`. The `pb`
+shim applies the same flags the server uses.
+
+Notes on the bundle:
+
+- Postgres is **not** published to the host — only the app reaches it, over the
+  internal compose network.
+- Two named volumes: `pgdata` (the database, i.e. your records) and `pbdata`
+  (uploaded files and generated backups). **Both** are needed for a full
+  restore; `pbdata` alone is not a backup.
+- The app runs as a non-root user, and the image carries `pg_dump`/`psql` at the
+  same major version as the server so backups work from inside the container.
+- It is a separate file from `docker-compose.yml`, which is the development and
+  test setup, so a stray `docker compose up` cannot touch a deployed stack.
+
+### Updating
+
+**Take a backup first.** An update can carry migrations, which run automatically
+on the next start.
+
+**Docker:** update by image tag, not with the `update` command — `ghupdate`
+would rewrite the binary *inside* the running container, which works until the
+container is recreated and then silently reverts.
+
+```bash
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+```
+
+**Binary:** self-update from this fork's GitHub releases.
+
+```bash
+./pocketbase update
+```
+
+> The plugin defaults to `pocketbase/pocketbase`. This fork points it at its own
+> repository — otherwise `update` would fetch the upstream **SQLite** build and
+> overwrite the binary in place, and the next start would find no SQLite data
+> and look like total data loss.
+
 ### Running in production
 
 The binary needs nothing but a reachable PostgreSQL:

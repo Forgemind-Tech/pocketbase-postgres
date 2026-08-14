@@ -7,6 +7,11 @@ on:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    permissions:
+      # create the GitHub release
+      contents: write
+      # push the container image to ghcr.io
+      packages: write
     env:
       flags: ""
     steps:
@@ -43,8 +48,29 @@ jobs:
       # - name: Generate jsvm types
       #   run: go run ./plugins/jsvm/internal/types/types.go
 
+      # the suite runs against a real PostgreSQL - reuses the repo's compose
+      # file so CI and local development exercise the same server settings
+      - name: Start PostgreSQL
+        run: docker compose --profile test up -d --wait postgres-test
+
       - name: Run tests
         run: go test ./...
+
+      # arm64 images are built on an amd64 runner
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # only needed when actually publishing; snapshot builds do not push
+      - name: Log in to ghcr.io
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

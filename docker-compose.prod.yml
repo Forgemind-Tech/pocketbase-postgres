@@ -1,0 +1,70 @@
+# Production bundle: PocketBase + PostgreSQL.
+#
+#   cp .env.example .env     # then edit it
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Separate from docker-compose.yml, which is the development/test setup. Keeping
+# them apart means a stray "docker compose up" in this directory cannot touch a
+# deployed stack, and vice versa.
+#
+# See POSTGRES.md for backups, failover and the connection settings.
+
+name: pocketbase
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pocketbase}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-pocketbase}
+    volumes:
+      # note: postgres:18+ expects a single mount at /var/lib/postgresql and
+      # places the cluster in a major-version subdirectory beneath it
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-pocketbase} -d ${POSTGRES_DB:-pocketbase}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # deliberately NOT published to the host - only the app needs to reach it,
+    # and it does so over the internal compose network
+
+  pocketbase:
+    # published by the release workflow to the GitHub Container Registry, so a
+    # deployment needs only this file and .env - no source checkout
+    #
+    # to run a locally built image instead:
+    #   docker build -t ghcr.io/mwakalinga/pocketbase-postgres:local .
+    #   PB_IMAGE_TAG=local docker compose -f docker-compose.prod.yml up -d
+    image: ghcr.io/mwakalinga/pocketbase-postgres:${PB_IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        # waits for the healthcheck, not just for the container to exist
+        condition: service_healthy
+    environment:
+      # "postgres" is the service name on the compose network
+      PB_DB_URL: postgres://${POSTGRES_USER:-pocketbase}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pocketbase}?sslmode=disable
+      PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:?set PB_ENCRYPTION_KEY in .env}
+    command:
+      - serve
+      - --http=0.0.0.0:8090
+      - --dir=/pb_data
+      # the flag takes the *name* of the env variable holding the key
+      - --encryptionEnv=PB_ENCRYPTION_KEY
+    ports:
+      - "${PB_PORT:-8090}:8090"
+    volumes:
+      # uploaded files and generated backups; the records themselves live in
+      # Postgres, so this volume alone is NOT a complete backup
+      - pbdata:/pb_data
+
+volumes:
+  pgdata:
+  pbdata:
