@@ -374,6 +374,25 @@ func archiveSuffix(goos, goarch string) string {
 	return ""
 }
 
+// leadingNumber returns the number a version segment starts with, ignoring any
+// trailing non-digits.
+//
+// This fork tags releases as "v0.39.10-pg.1" (upstream version + fork revision),
+// which splits into ["0", "39", "10-pg", "1"]. Parsing the whole segment leaves
+// "10-pg" unparseable, so it would compare as 0 on both sides and any upstream
+// patch bump - 0.39.10-pg.1 against 0.39.11-pg.1 - would look equal and never
+// be offered as an update.
+func leadingNumber(s string) int {
+	end := 0
+	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		end++
+	}
+
+	n, _ := strconv.Atoi(s[:end])
+
+	return n
+}
+
 func compareVersions(a, b string) int {
 	aSplit := strings.Split(a, ".")
 	aTotal := len(aSplit)
@@ -390,11 +409,11 @@ func compareVersions(a, b string) int {
 		var x, y int
 
 		if i < aTotal {
-			x, _ = strconv.Atoi(aSplit[i])
+			x = leadingNumber(aSplit[i])
 		}
 
 		if i < bTotal {
-			y, _ = strconv.Atoi(bSplit[i])
+			y = leadingNumber(bSplit[i])
 		}
 
 		if x < y {

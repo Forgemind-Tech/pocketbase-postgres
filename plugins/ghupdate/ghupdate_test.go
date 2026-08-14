@@ -24,6 +24,17 @@ func TestCompareVersions(t *testing.T) {
 		{"1.2.9", "1.2.10", 1},
 		{"3.2", "4.0", 1},
 		{"3.2.4", "3.2.3", -1},
+
+		// this fork tags releases as "0.39.10-pg.1"; the suffix must not stop
+		// the numeric segments from comparing (1 = b is newer)
+		{"0.39.10-pg.1", "0.39.10-pg.2", 1},
+		{"0.39.10-pg.1", "0.39.11-pg.1", 1},
+		{"0.39.10-pg.1", "0.40.0-pg.1", 1},
+		{"0.39.10-pg.2", "0.39.10-pg.1", -1},
+		{"0.39.11-pg.1", "0.39.10-pg.9", -1},
+		{"0.39.10-pg.1", "0.39.10-pg.1", 0},
+		// a fork build is newer than the bare upstream version it is based on
+		{"0.39.10", "0.39.10-pg.1", 1},
 	}
 
 	for _, s := range scenarios {
