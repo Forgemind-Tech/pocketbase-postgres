@@ -1,34 +1,67 @@
 # PocketBase on PostgreSQL
 
-A fork of [PocketBase](https://pocketbase.io) with **SQLite replaced by PostgreSQL**.
+**PostgreSQL instead of SQLite, in the same single-binary PocketBase you already
+know.** No SQLite code path is left and there is no build tag to switch back —
+this is a one-way port, not a dual-database abstraction.
 
-There is no SQLite code path left and no build tag to switch back — this is a
-one-way port, not a dual-database abstraction.
+```bash
+curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh
+sh install.sh
+```
 
-> **Not affiliated with the upstream project.** For upstream PocketBase, see
-> [pocketbase/pocketbase](https://github.com/pocketbase/pocketbase). Please do
-> not report issues found here to the upstream maintainers.
+Everything PocketBase offers is unchanged: realtime subscriptions, files and
+users management, the admin dashboard, and the REST-ish API.
 
-Everything else PocketBase offers is unchanged:
+## About this repository
 
-- database with **realtime subscriptions**
-- built-in **files and users management**
-- convenient **Admin dashboard UI**
-- simple **REST-ish API**
+This is an **independent fork** of [PocketBase](https://github.com/pocketbase/pocketbase)
+by [Gani Georgiev](https://github.com/ganigeorgiev), maintained by
+[@mwakalinga](https://github.com/mwakalinga). It is **not affiliated with, nor
+endorsed by, the upstream project**.
 
-**For general documentation and examples, upstream's docs still apply:
-https://pocketbase.io/docs.** For everything specific to this fork — connection
-settings, behavioural differences, backups — see **[POSTGRES.md](POSTGRES.md)**.
+- **Bugs and questions about this fork** → open an issue **here**. Please do not
+  send them upstream; the maintainers there cannot act on code that only exists
+  in this repository.
+- **Bugs in PocketBase itself** (unrelated to PostgreSQL) → reproduce on
+  [upstream](https://github.com/pocketbase/pocketbase) first and report there.
+- **General usage docs** → upstream's documentation still applies:
+  https://pocketbase.io/docs
 
-Fork-specific changes, and a record of what was taken from each upstream
-release, live in **[CHANGELOG_FORK.md](CHANGELOG_FORK.md)**. `CHANGELOG.md` is
-kept byte-identical to upstream so that pulling their changes never conflicts
-there.
+Licensed under the [MIT License](LICENSE.md), the same as upstream, which
+retains copyright for the original work.
 
-> [!WARNING]
-> PocketBase is under active development and full backward compatibility is not
-> guaranteed before v1.0.0. This fork adds its own deliberate API breaks on top
-> (see [Behaviour differences](#behaviour-differences)).
+Currently based on upstream **v0.39.10**. What was taken from each upstream
+release, and everything this fork changes, is recorded in
+[CHANGELOG_FORK.md](CHANGELOG_FORK.md); `CHANGELOG.md` is kept byte-identical to
+upstream so their changes never conflict there.
+
+## What this fork changes
+
+**PostgreSQL replaces SQLite.** Records live in the `public` schema, logs in
+`pb_aux`. Retries are keyed on SQLSTATE, schema introspection runs against the
+Postgres catalogs, and view collections are validated at startup instead of
+failing later at runtime.
+
+**Connection configuration and a `db` command.** The connection resolves from
+`--dbUrl`, then `PB_DB_URL`, then `db.json`, then built-in defaults.
+`db show` / `db set` / `db test` work even when the database is unreachable —
+which is exactly when you need them.
+
+**Backups use `pg_dump`/`psql`**, and do not block writes. `pg_dump` reads a
+consistent snapshot, and file deletions are postponed for the duration so the
+archive cannot reference a file it no longer contains. The tools do not have to
+be installed on the host.
+
+**Concurrent writes.** Upstream caps the write pool at a single connection to
+avoid `SQLITE_BUSY`. That cap is meaningless on Postgres and only serialised
+every write in the application; removing it took a benchmark of 100 concurrent
+writes from 2.28s to 142ms.
+
+**A Docker deployment bundle** — the app and PostgreSQL together, published as a
+container image, with the installer above.
+
+Deliberate, user-visible API breaks are listed under
+[Behaviour differences](#behaviour-differences).
 
 ## Requirements
 
@@ -41,8 +74,34 @@ compose file pins 18).
 
 ## Quick start
 
-You do not need this repository, Go, or a database. Three commands on any
-machine with Docker:
+You do not need this repository, Go, or a database — only Docker.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh
+```
+
+```bash
+sh install.sh
+```
+
+It asks for the install directory, port, database name and user, generates a
+strong database password, writes `compose.yaml` and `.env`, starts everything,
+waits until the server answers, and offers to create your first superuser. Then
+open the dashboard it prints, typically **http://localhost:8090/_/**.
+
+It is a download rather than a pipe into a shell on purpose: read it first.
+
+For an unattended install:
+
+```bash
+sh install.sh --yes --port 8090 --dir ./pocketbase --admin-email you@example.com --admin-pass yourpassword
+```
+
+`sh install.sh --help` lists every option (port, database user and name,
+password, image tag, install directory).
+
+<details>
+<summary>Prefer to write the files yourself?</summary>
 
 ```bash
 curl -o compose.yaml https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/docker-compose.prod.yml
@@ -52,31 +111,32 @@ curl -o compose.yaml https://raw.githubusercontent.com/mwakalinga/pocketbase-pos
 curl -o .env https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/.env.example
 ```
 
-Open `.env` and set `POSTGRES_PASSWORD` — the app refuses to start while it is
-the example value. Generate one with `openssl rand -base64 24`. Everything else
-has a working default.
+Set `POSTGRES_PASSWORD` in `.env` — the app refuses to start while it is the
+example value — then:
 
 ```bash
 docker compose up -d
 ```
 
-That is it. The dashboard is at **http://localhost:8090/_/**.
-
-Create the first superuser:
-
 ```bash
 docker compose exec pocketbase pb superuser upsert you@example.com yourpassword
 ```
 
-> Use `pb`, not `pocketbase`, for commands inside the container. `docker compose
-> exec` bypasses the image's entrypoint, so the bare binary would run without
-> `--dir` and fail confusingly. `pb` applies the flags the server uses.
+Saving it as `compose.yaml` is why these commands need no `-f` flag. In a
+repository checkout the file is `docker-compose.prod.yml`, and every command
+needs `-f docker-compose.prod.yml`.
+
+</details>
 
 Check it is healthy at any time:
 
 ```bash
 curl http://localhost:8090/api/health
 ```
+
+> Use `pb`, not `pocketbase`, for commands inside the container. `docker compose
+> exec` bypasses the image's entrypoint, so the bare binary would run without
+> `--dir` and fail confusingly. `pb` applies the flags the server uses.
 
 ### What you just started
 
