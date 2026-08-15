@@ -18,23 +18,16 @@ RUN addgroup -S pb && adduser -S -G pb pb \
 # supplied by goreleaser in the build context
 COPY pocketbase /usr/local/bin/pocketbase
 
-# "docker compose exec" bypasses CMD, so a bare "pocketbase superuser ..." runs
-# without --dir and --encryptionEnv and fails with a confusing
-# "missing encryption key". This shim applies the same flags.
-RUN printf '%s\n' \
-    '#!/bin/sh' \
-    '# runs the pocketbase binary with this image'"'"'s standard flags' \
-    'set -e' \
-    'if [ -n "${PB_ENCRYPTION_KEY:-}" ]; then' \
-    '  exec /usr/local/bin/pocketbase "$@" --dir=/pb_data --encryptionEnv=PB_ENCRYPTION_KEY' \
-    'fi' \
-    'exec /usr/local/bin/pocketbase "$@" --dir=/pb_data' \
-    > /usr/local/bin/pb \
-    && chmod +x /usr/local/bin/pb
+# the shim applies the flags every invocation needs and refuses to start on the
+# example credentials; see docker/entrypoint.sh
+COPY docker/entrypoint.sh /usr/local/bin/pb
+RUN chmod +x /usr/local/bin/pb
 
 USER pb
 WORKDIR /pb_data
 EXPOSE 8090
 
-ENTRYPOINT ["/usr/local/bin/pocketbase"]
-CMD ["serve", "--http=0.0.0.0:8090", "--dir=/pb_data"]
+# ENTRYPOINT is the shim rather than the binary, so that "docker compose exec
+# pocketbase pb ..." and the server itself get identical flags
+ENTRYPOINT ["/usr/local/bin/pb"]
+CMD ["serve", "--http=0.0.0.0:8090"]

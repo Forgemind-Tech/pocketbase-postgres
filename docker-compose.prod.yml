@@ -51,13 +51,12 @@ services:
     environment:
       # "postgres" is the service name on the compose network
       PB_DB_URL: postgres://${POSTGRES_USER:-pocketbase}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-pocketbase}?sslmode=disable
-      PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:?set PB_ENCRYPTION_KEY in .env}
-    command:
-      - serve
-      - --http=0.0.0.0:8090
-      - --dir=/pb_data
-      # the flag takes the *name* of the env variable holding the key
-      - --encryptionEnv=PB_ENCRYPTION_KEY
+      # optional - upstream PocketBase does not encrypt settings by default
+      # either. When set it must be exactly 32 characters and encrypts the
+      # stored SMTP/S3 credentials; losing it makes those unreadable.
+      PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
+    # the image already defaults to "serve --http=0.0.0.0:8090" through an
+    # entrypoint that adds --dir and, when a key is set, --encryptionEnv
     ports:
       - "${PB_PORT:-8090}:8090"
     volumes:

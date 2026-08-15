@@ -32,25 +32,110 @@ there.
 
 ## Requirements
 
-- [Go 1.25+](https://go.dev/doc/install)
-- **PostgreSQL 16 or newer** — the `IS JSON` predicate is used; the bundled
-  compose file pins 18
-- Docker, if you want the bundled Postgres rather than your own
-- `pg_dump` / `psql`, but only for the backup feature (they can run inside the
-  container — see [POSTGRES.md](POSTGRES.md#backups))
+**To run it:** Docker, and nothing else. The bundle below brings its own
+PostgreSQL.
+
+**To build from source or use it as a Go library:** [Go 1.25+](https://go.dev/doc/install)
+and a PostgreSQL 16 or newer server (the `IS JSON` predicate is used; the bundled
+compose file pins 18).
 
 ## Quick start
 
+You do not need this repository, Go, or a database. Three commands on any
+machine with Docker:
+
 ```bash
-docker-compose up -d postgres
+curl -o compose.yaml https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/docker-compose.prod.yml
 ```
 
 ```bash
-go run ./examples/base serve
+curl -o .env https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/.env.example
 ```
 
-That's it — the built-in defaults match the bundled compose file, so a fresh
-clone runs with no configuration at all.
+Open `.env` and set `POSTGRES_PASSWORD` — the app refuses to start while it is
+the example value. Generate one with `openssl rand -base64 24`. Everything else
+has a working default.
+
+```bash
+docker compose up -d
+```
+
+That is it. The dashboard is at **http://localhost:8090/_/**.
+
+Create the first superuser:
+
+```bash
+docker compose exec pocketbase pb superuser upsert you@example.com yourpassword
+```
+
+> Use `pb`, not `pocketbase`, for commands inside the container. `docker compose
+> exec` bypasses the image's entrypoint, so the bare binary would run without
+> `--dir` and fail confusingly. `pb` applies the flags the server uses.
+
+Check it is healthy at any time:
+
+```bash
+curl http://localhost:8090/api/health
+```
+
+### What you just started
+
+- **Two containers**: the app, and PostgreSQL. Postgres is *not* published to the
+  host — only the app reaches it, over a private network.
+- **Two volumes**: `pgdata` holds the database (your records, collections and
+  settings) and `pbdata` holds uploaded files and generated backups. **Both** are
+  needed for a full restore — copying `pbdata` alone is not a backup.
+- The app runs as a non-root user, and carries `pg_dump`/`psql` matching the
+  server version so backups work from inside the container.
+
+Saving the file as `compose.yaml` is why the commands above have no
+`-f` flag. If you cloned the repository instead, the file is
+`docker-compose.prod.yml` and every command needs
+`-f docker-compose.prod.yml`.
+
+### Putting it on the internet
+
+The bundle publishes port 8090 over plain HTTP, which is fine behind a proxy and
+wrong on its own. For a public deployment, terminate TLS in front of it — Caddy,
+nginx or your platform's load balancer — and forward to `pocketbase:8090`.
+
+PocketBase's built-in Let's Encrypt support (`serve yourdomain.com`) needs ports
+80 and 443, which the bundle does not publish, so it is not the path of least
+resistance here.
+
+Also set `PB_IMAGE_TAG` in `.env` to a specific release rather than leaving it at
+`latest`, so a restart cannot silently move you to a new version.
+
+### Troubleshooting
+
+**`port is already allocated`** — something else uses 8090. Set `PB_PORT=8091`
+in `.env` and run `docker compose up -d` again.
+
+**`denied` or `unauthorized` when pulling the image** — the package may still be
+private. Either make it public in the repository's package settings, or
+`docker login ghcr.io` first.
+
+**`refusing to start: POSTGRES_PASSWORD is still the example value`** — working
+as intended. Set a real password in `.env`.
+
+**`permission denied` talking to Docker** — your user is not in the `docker`
+group. Use `sudo`, or add yourself and log out and back in.
+
+**Nothing on 8090** — check both containers are up and read the logs:
+
+```bash
+docker compose ps
+```
+
+```bash
+docker compose logs pocketbase
+```
+
+**Start over completely** — this deletes the database and all uploads:
+
+```bash
+docker compose down -v
+```
 
 ## Configuring the database
 
@@ -81,6 +166,30 @@ when the database is unreachable — that's what they're for.
 
 Full details, including the security caveat about storing passwords on disk, are
 in [POSTGRES.md](POSTGRES.md#configuring-the-connection).
+
+## Updating
+
+**Take a backup first.** An update can carry migrations, which run automatically
+on the next start.
+
+**Docker:** update by image tag, not with the `update` command — `ghupdate`
+would rewrite the binary *inside* the running container, which works until the
+container is recreated and then silently reverts.
+
+```bash
+docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+```
+
+**Binary:** self-update from this fork's GitHub releases.
+
+```bash
+./pocketbase update
+```
+
+> The plugin defaults to `pocketbase/pocketbase`. This fork points it at its own
+> repository — otherwise `update` would fetch the upstream **SQLite** build and
+> overwrite the binary in place, and the next start would find no SQLite data
+> and look like total data loss.
 
 ## Behaviour differences
 
@@ -187,68 +296,6 @@ committed — no Node build step is needed to produce a working server.
 The Postgres driver (`pgx`) is pure Go, so unlike upstream there is no
 driver-specific build target list: `CGO_ENABLED=0` produces a statically linked
 binary and cross-compiles to any platform Go itself supports.
-
-### Deploying with Docker (recommended)
-
-A production bundle ships the app and PostgreSQL together:
-
-```bash
-cp .env.example .env
-```
-
-Edit `.env` — at minimum `POSTGRES_PASSWORD` and the 32-character
-`PB_ENCRYPTION_KEY` — then:
-
-```bash
-docker compose -f docker-compose.prod.yml up -d
-```
-
-The dashboard is on `http://localhost:8090/_/`. Create the first superuser with:
-
-```bash
-docker compose -f docker-compose.prod.yml exec pocketbase pb superuser upsert you@example.com yourpassword
-```
-
-Use `pb` rather than `pocketbase` for CLI commands: `docker compose exec`
-bypasses the image's `CMD`, so the bare binary would run without `--dir` and
-`--encryptionEnv` and fail with a confusing `missing encryption key`. The `pb`
-shim applies the same flags the server uses.
-
-Notes on the bundle:
-
-- Postgres is **not** published to the host — only the app reaches it, over the
-  internal compose network.
-- Two named volumes: `pgdata` (the database, i.e. your records) and `pbdata`
-  (uploaded files and generated backups). **Both** are needed for a full
-  restore; `pbdata` alone is not a backup.
-- The app runs as a non-root user, and the image carries `pg_dump`/`psql` at the
-  same major version as the server so backups work from inside the container.
-- It is a separate file from `docker-compose.yml`, which is the development and
-  test setup, so a stray `docker compose up` cannot touch a deployed stack.
-
-### Updating
-
-**Take a backup first.** An update can carry migrations, which run automatically
-on the next start.
-
-**Docker:** update by image tag, not with the `update` command — `ghupdate`
-would rewrite the binary *inside* the running container, which works until the
-container is recreated and then silently reverts.
-
-```bash
-docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
-```
-
-**Binary:** self-update from this fork's GitHub releases.
-
-```bash
-./pocketbase update
-```
-
-> The plugin defaults to `pocketbase/pocketbase`. This fork points it at its own
-> repository — otherwise `update` would fetch the upstream **SQLite** build and
-> overwrite the binary in place, and the next start would find no SQLite data
-> and look like total data loss.
 
 ### Running in production
 

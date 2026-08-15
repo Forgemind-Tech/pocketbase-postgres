@@ -54,6 +54,9 @@ dockers:
     goarch: amd64
     dockerfile: Dockerfile.goreleaser
     use: buildx
+    # goreleaser only puts the binary in the build context by default
+    extra_files:
+      - docker/entrypoint.sh
     image_templates:
       - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-amd64"
       - "ghcr.io/mwakalinga/pocketbase-postgres:latest-amd64"
@@ -71,6 +74,9 @@ dockers:
     goarch: arm64
     dockerfile: Dockerfile.goreleaser
     use: buildx
+    # goreleaser only puts the binary in the build context by default
+    extra_files:
+      - docker/entrypoint.sh
     image_templates:
       - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-arm64"
       - "ghcr.io/mwakalinga/pocketbase-postgres:latest-arm64"
