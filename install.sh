@@ -1,8 +1,8 @@
 #!/bin/sh
-# PocketBase on PostgreSQL - installer.
+# PocketBase on PostgreSQL - installer and updater.
 #
-# Downloads nothing else: it writes a compose file and a .env, starts the stack
-# and creates the first superuser.
+# Writes a compose file and a .env, starts the stack, and creates the first
+# superuser. Downloads nothing else.
 #
 #   curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh
 #   sh install.sh
@@ -14,6 +14,11 @@
 #
 #   sh install.sh --yes --port 8090 --dir ./pocketbase
 #
+# Updating an existing install (run it from the install directory, or pass --dir):
+#
+#   sh install.sh --update              # newest image for the configured tag
+#   sh install.sh --update --tag v1.2.3 # switch to a specific release
+#
 # Options:
 #   --dir PATH        where to install            (default ./pocketbase)
 #   --port N          host port for the dashboard (default 8090)
@@ -21,12 +26,15 @@
 #   --db-name NAME    database name               (default pocketbase)
 #   --db-pass SECRET  database password           (default: generated)
 #   --tag TAG         image tag to deploy         (default latest)
-#   --admin-email X   first superuser email       (default: asked, or skipped)
-#   --admin-pass X    first superuser password
+#   --tz ZONE         timezone, eg. Africa/Dar_es_Salaam (default: detected)
+#   --admin-email X   first superuser email
+#   --admin-pass X    first superuser password    (at least 8 characters)
+#   --update          update an existing install instead of creating one
 #   --yes             accept defaults, never prompt
 set -eu
 
 REPO_IMAGE="${PB_IMAGE_REPO:-ghcr.io/mwakalinga/pocketbase-postgres}"
+MIN_PASSWORD_LEN=8
 
 INSTALL_DIR="./pocketbase"
 PB_PORT="8090"
@@ -37,8 +45,13 @@ IMAGE_TAG="latest"
 ADMIN_EMAIL=""
 ADMIN_PASS=""
 ASSUME_YES="0"
+DO_UPDATE="0"
+TZ_NAME=""
+TAG_GIVEN="0"
+TZ_UNVERIFIED=0
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
+say() { printf '%s\n' "$1"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -47,11 +60,13 @@ while [ $# -gt 0 ]; do
         --db-user) DB_USER="${2:-}"; shift 2 ;;
         --db-name) DB_NAME="${2:-}"; shift 2 ;;
         --db-pass) DB_PASS="${2:-}"; shift 2 ;;
-        --tag) IMAGE_TAG="${2:-}"; shift 2 ;;
+        --tag) IMAGE_TAG="${2:-}"; TAG_GIVEN="1"; shift 2 ;;
+        --tz) TZ_NAME="${2:-}"; shift 2 ;;
         --admin-email) ADMIN_EMAIL="${2:-}"; shift 2 ;;
         --admin-pass) ADMIN_PASS="${2:-}"; shift 2 ;;
+        --update) DO_UPDATE="1"; shift ;;
         --yes|-y) ASSUME_YES="1"; shift ;;
-        -h|--help) sed -n '2,30p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
         *) die "unknown option: $1 (try --help)" ;;
     esac
 done
@@ -69,11 +84,76 @@ fi
 
 docker info >/dev/null 2>&1 || die "cannot talk to the docker daemon - is it running, and is your user in the 'docker' group?"
 
+# ------------------------------------------------------------ validators ----
+valid_port() {
+    case "$1" in ''|*[!0-9]*) return 1 ;; esac
+    [ "$1" -ge 1 ] 2>/dev/null && [ "$1" -le 65535 ] 2>/dev/null
+}
+
+# postgres identifiers: letters, digits and underscore, not starting with a digit
+valid_ident() {
+    case "$1" in
+        ''|*[!A-Za-z0-9_]*) return 1 ;;
+        [0-9]*) return 1 ;;
+    esac
+    return 0
+}
+
+valid_email() {
+    case "$1" in
+        *[!\ ]*@*.*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+valid_password() {
+    [ "${#1}" -ge "$MIN_PASSWORD_LEN" ]
+}
+
+valid_tz() {
+    [ -n "$1" ] || return 1
+    [ "$1" = "UTC" ] && return 0
+    if [ -d /usr/share/zoneinfo ]; then
+        [ -e "/usr/share/zoneinfo/$1" ] || return 1
+        return 0
+    fi
+    # No tz database on this host (eg. Git Bash on Windows). Ask the postgres
+    # image instead - it ships tzdata and is pulled anyway, so this checks the
+    # name against the same database the containers will use.
+    if docker image inspect postgres:18 >/dev/null 2>&1; then
+        docker run --rm --entrypoint test postgres:18 -f "/usr/share/zoneinfo/$1" && return 0
+        return 1
+    fi
+    # nothing available to check against: require Area/City and warn later
+    case "$1" in
+        */*) TZ_UNVERIFIED=1; return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+valid_tag() {
+    case "$1" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac
+    return 0
+}
+
+detect_tz() {
+    if [ -n "${TZ:-}" ]; then printf '%s\n' "$TZ"; return; fi
+    if [ -f /etc/timezone ]; then sed -n '1p' /etc/timezone; return; fi
+    if [ -L /etc/localtime ]; then
+        readlink /etc/localtime | sed 's|.*/zoneinfo/||'
+        return
+    fi
+    printf 'UTC\n'
+}
+
 # --------------------------------------------------------------- prompts ----
-# read from the terminal, so prompting still works if this script was piped
-ask() { # ask VAR_NAME "prompt" "default"
+interactive() {
+    [ "$ASSUME_YES" != "1" ] && [ -r /dev/tty ]
+}
+
+ask() { # ask VAR "prompt" "default"
     _def="$3"
-    if [ "$ASSUME_YES" = "1" ] || [ ! -t 0 ] && [ ! -r /dev/tty ]; then
+    if ! interactive; then
         eval "$1=\"\$_def\""
         return
     fi
@@ -83,38 +163,148 @@ ask() { # ask VAR_NAME "prompt" "default"
     eval "$1=\"\$_ans\""
 }
 
+# ask and keep asking until the answer passes; in non-interactive mode a bad
+# value is a hard error rather than an infinite loop
+ask_valid() { # ask_valid VAR "prompt" "default" validator "error text"
+    while :; do
+        ask "$1" "$2" "$3"
+        eval "_val=\"\$$1\""
+        if "$4" "$_val"; then
+            return 0
+        fi
+        if ! interactive; then
+            die "$5 (got '$_val')"
+        fi
+        printf '  %s\n' "$5" > /dev/tty
+    done
+}
+
 generate_secret() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -base64 24 | tr -d '/+=' | cut -c1-24
     else
-        # no openssl: fall back to the kernel's entropy
         tr -dc 'A-Za-z0-9' < /dev/urandom 2>/dev/null | head -c 24
     fi
 }
 
-echo "PocketBase on PostgreSQL - installer"
-echo
+wait_for_health() { # wait_for_health PORT
+    printf 'waiting for the server'
+    _i=0
+    while [ "$_i" -lt 60 ]; do
+        if curl -fsS -m 3 "http://127.0.0.1:$1/api/health" >/dev/null 2>&1; then
+            say " ok"
+            return 0
+        fi
+        printf '.'
+        _i=$((_i + 1))
+        sleep 2
+    done
+    say ""
+    return 1
+}
 
-if [ "$ASSUME_YES" != "1" ]; then
-    ask INSTALL_DIR "Install directory" "$INSTALL_DIR"
-    ask PB_PORT     "Port for the dashboard and API" "$PB_PORT"
-    ask DB_USER     "Database user" "$DB_USER"
-    ask DB_NAME     "Database name" "$DB_NAME"
-    ask IMAGE_TAG   "Image tag" "$IMAGE_TAG"
+# ---------------------------------------------------------------- update ----
+if [ "$DO_UPDATE" = "1" ]; then
+    if [ -f compose.yaml ]; then
+        : # already in an install directory
+    elif [ -f "$INSTALL_DIR/compose.yaml" ]; then
+        cd "$INSTALL_DIR"
+    else
+        die "no compose.yaml here or in $INSTALL_DIR - run this from your install directory, or pass --dir"
+    fi
+
+    [ -f .env ] || die "no .env next to compose.yaml - cannot tell which image to update"
+
+    say "updating the install in $(pwd)"
+    say ""
+    say "Back up first if this matters: an update can carry database migrations,"
+    say "which apply automatically on the next start."
+    if interactive; then
+        ask _go "Continue? (y/N)" "N"
+        case "$_go" in y|Y|yes|YES) : ;; *) die "cancelled" ;; esac
+    fi
+
+    if [ "$TAG_GIVEN" = "1" ]; then
+        valid_tag "$IMAGE_TAG" || die "invalid image tag '$IMAGE_TAG'"
+        # rewrite only the image line, leaving the rest of .env untouched
+        _tmp=".env.tmp.$$"
+        sed "s|^PB_IMAGE=.*|PB_IMAGE=$REPO_IMAGE:$IMAGE_TAG|" .env > "$_tmp" && mv "$_tmp" .env
+        say "switched to $REPO_IMAGE:$IMAGE_TAG"
+    fi
+
+    _port="$(sed -n 's/^PB_PORT=//p' .env | sed -n '1p')"
+    [ -n "$_port" ] || _port="8090"
+
+    $COMPOSE pull
+    $COMPOSE up -d
+
+    if wait_for_health "$_port"; then
+        say ""
+        say "updated. Running: $(sed -n 's/^PB_IMAGE=//p' .env | sed -n '1p')"
+    else
+        say "the server did not come back healthy. Check: $COMPOSE logs"
+        exit 1
+    fi
+    exit 0
+fi
+
+# --------------------------------------------------------------- install ----
+say "PocketBase on PostgreSQL - installer"
+say ""
+
+# A timezone the user asked for must be honoured or rejected - never silently
+# swapped for something else. Only a *detected* value falls back quietly.
+if [ -n "$TZ_NAME" ]; then
+    if ! valid_tz "$TZ_NAME"; then
+        interactive || die "invalid timezone '$TZ_NAME' - use a zone name like Africa/Dar_es_Salaam, Europe/London or UTC"
+        say "invalid timezone '$TZ_NAME' - pick another below"
+        TZ_NAME="UTC"
+    fi
+else
+    TZ_NAME="$(detect_tz)"
+    valid_tz "$TZ_NAME" || TZ_NAME="UTC"
+fi
+
+if interactive; then
+    ask       INSTALL_DIR "Install directory" "$INSTALL_DIR"
+    ask_valid PB_PORT     "Port for the dashboard and API" "$PB_PORT" \
+              valid_port "port must be a number between 1 and 65535"
+    ask_valid DB_USER     "Database user" "$DB_USER" \
+              valid_ident "use letters, digits and underscore, not starting with a digit"
+    ask_valid DB_NAME     "Database name" "$DB_NAME" \
+              valid_ident "use letters, digits and underscore, not starting with a digit"
+    ask_valid TZ_NAME     "Timezone" "$TZ_NAME" \
+              valid_tz "use a zone name like Africa/Dar_es_Salaam, Europe/London or UTC"
+    ask_valid IMAGE_TAG   "Image tag" "$IMAGE_TAG" \
+              valid_tag "tags may contain letters, digits, dot, dash and underscore"
+else
+    valid_port "$PB_PORT"   || die "port must be a number between 1 and 65535 (got '$PB_PORT')"
+    valid_ident "$DB_USER"  || die "invalid database user '$DB_USER'"
+    valid_ident "$DB_NAME"  || die "invalid database name '$DB_NAME'"
+    valid_tag "$IMAGE_TAG"  || die "invalid image tag '$IMAGE_TAG'"
+    valid_tz "$TZ_NAME"     || die "invalid timezone '$TZ_NAME'"
+fi
+
+# check the superuser details now rather than after the stack is up - failing
+# on a too-short password only once everything has started is a poor trade
+if [ -n "$ADMIN_EMAIL" ]; then
+    valid_email "$ADMIN_EMAIL" || die "invalid superuser email '$ADMIN_EMAIL'"
+fi
+if [ -n "$ADMIN_PASS" ]; then
+    valid_password "$ADMIN_PASS" || die "superuser password must be at least $MIN_PASSWORD_LEN characters"
 fi
 
 [ -n "$DB_PASS" ] || DB_PASS="$(generate_secret)"
 [ -n "$DB_PASS" ] || die "could not generate a database password - pass --db-pass"
 
-case "$PB_PORT" in
-    ''|*[!0-9]*) die "port must be a number, got '$PB_PORT'" ;;
-esac
-
-mkdir -p "$INSTALL_DIR"
-cd "$INSTALL_DIR"
+mkdir -p "$INSTALL_DIR" || die "cannot create $INSTALL_DIR"
+cd "$INSTALL_DIR" || die "cannot enter $INSTALL_DIR"
 
 if [ -f compose.yaml ] || [ -f .env ]; then
-    ask _overwrite "An install already exists here. Overwrite compose.yaml and .env? (y/N)" "N"
+    say ""
+    say "An install already exists in $(pwd)."
+    say "To update it instead, run:  sh install.sh --update"
+    ask _overwrite "Overwrite compose.yaml and .env? (y/N)" "N"
     case "$_overwrite" in
         y|Y|yes|YES) : ;;
         *) die "left the existing install untouched" ;;
@@ -131,8 +321,9 @@ cat > compose.yaml <<'COMPOSE_EOF'
 #   docker compose down -v        stop and DELETE all data
 #
 # Settings live in .env next to this file.
-
-name: pocketbase
+#
+# note: no "name:" here on purpose - Compose then uses this directory's name as
+# the project name, so separate installs on one host stay separate.
 
 services:
   postgres:
@@ -142,6 +333,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       POSTGRES_DB: ${POSTGRES_DB:?}
+      TZ: ${TZ:-UTC}
     volumes:
       # postgres:18+ expects a single mount here and puts the cluster in a
       # major-version subdirectory beneath it
@@ -161,6 +353,9 @@ services:
         condition: service_healthy
     environment:
       PB_DB_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      # affects log timestamps and cron schedules (eg. automatic backups).
+      # Record timestamps are stored in UTC regardless.
+      TZ: ${TZ:-UTC}
       # optional; when set it must be exactly 32 characters
       PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
     ports:
@@ -187,6 +382,10 @@ POSTGRES_PASSWORD=$DB_PASS
 PB_IMAGE=$REPO_IMAGE:$IMAGE_TAG
 PB_PORT=$PB_PORT
 
+# Affects log timestamps and cron schedules such as automatic backups.
+# Record timestamps are stored in UTC regardless of this.
+TZ=$TZ_NAME
+
 # Optional. Exactly 32 characters. Encrypts stored SMTP/S3 credentials at rest;
 # losing it makes those settings unreadable. Generate one with:
 #   openssl rand -base64 24 | cut -c1-32
@@ -194,59 +393,63 @@ PB_ENCRYPTION_KEY=
 ENV_EOF
 umask 022
 
-echo
-echo "wrote $(pwd)/compose.yaml"
-echo "wrote $(pwd)/.env"
-echo
+say ""
+say "wrote $(pwd)/compose.yaml"
+say "wrote $(pwd)/.env"
+say ""
 
 # ------------------------------------------------------------------ start ---
-echo "starting..."
+say "starting..."
 $COMPOSE up -d
 
-printf 'waiting for the server'
-i=0
-while [ "$i" -lt 60 ]; do
-    if curl -fsS -m 3 "http://127.0.0.1:$PB_PORT/api/health" >/dev/null 2>&1; then
-        echo " ok"
-        break
-    fi
-    printf '.'
-    i=$((i + 1))
-    sleep 2
-done
-
-if ! curl -fsS -m 3 "http://127.0.0.1:$PB_PORT/api/health" >/dev/null 2>&1; then
-    echo
-    echo "the server did not become healthy in time. Check the logs with:"
-    echo "  cd $(pwd) && $COMPOSE logs"
+if ! wait_for_health "$PB_PORT"; then
+    say "the server did not become healthy in time. Check the logs with:"
+    say "  cd $(pwd) && $COMPOSE logs"
     exit 1
 fi
 
 # ------------------------------------------------------------ superuser -----
-if [ -z "$ADMIN_EMAIL" ] && [ "$ASSUME_YES" != "1" ]; then
+if [ -z "$ADMIN_EMAIL" ] && interactive; then
     ask ADMIN_EMAIL "First superuser email (blank to skip)" ""
 fi
 
 if [ -n "$ADMIN_EMAIL" ]; then
+    valid_email "$ADMIN_EMAIL" || {
+        if interactive; then
+            ask_valid ADMIN_EMAIL "First superuser email" "$ADMIN_EMAIL" \
+                      valid_email "that does not look like an email address"
+        else
+            die "invalid superuser email '$ADMIN_EMAIL'"
+        fi
+    }
+
     if [ -z "$ADMIN_PASS" ]; then
-        ask ADMIN_PASS "First superuser password (min 10 characters)" ""
+        ask_valid ADMIN_PASS "First superuser password (at least $MIN_PASSWORD_LEN characters)" "" \
+                  valid_password "password must be at least $MIN_PASSWORD_LEN characters"
+    else
+        valid_password "$ADMIN_PASS" || die "superuser password must be at least $MIN_PASSWORD_LEN characters"
     fi
-    if [ -n "$ADMIN_PASS" ]; then
-        $COMPOSE exec -T pocketbase pb superuser upsert "$ADMIN_EMAIL" "$ADMIN_PASS" \
-            || echo "could not create the superuser - do it later with: $COMPOSE exec pocketbase pb superuser upsert EMAIL PASSWORD"
+
+    if $COMPOSE exec -T pocketbase pb superuser upsert "$ADMIN_EMAIL" "$ADMIN_PASS"; then
+        :
+    else
+        say "could not create the superuser. Create one later with:"
+        say "  cd $(pwd) && $COMPOSE exec pocketbase pb superuser upsert EMAIL PASSWORD"
     fi
 fi
 
-echo
-echo "----------------------------------------------------------------"
-echo " PocketBase is running"
-echo
-echo "   dashboard : http://localhost:$PB_PORT/_/"
-echo "   directory : $(pwd)"
-echo
-echo "   logs      : cd $(pwd) && $COMPOSE logs -f"
-echo "   stop      : cd $(pwd) && $COMPOSE down"
-echo "   superuser : cd $(pwd) && $COMPOSE exec pocketbase pb superuser upsert EMAIL PASSWORD"
-echo
-echo " Your database password is in .env - back that file up."
-echo "----------------------------------------------------------------"
+say ""
+say "----------------------------------------------------------------"
+say " PocketBase is running"
+say ""
+say "   dashboard : http://localhost:$PB_PORT/_/"
+say "   directory : $(pwd)"
+say "   timezone  : $TZ_NAME"
+say ""
+say "   logs      : cd $(pwd) && $COMPOSE logs -f"
+say "   stop      : cd $(pwd) && $COMPOSE down"
+say "   update    : cd $(pwd) && sh install.sh --update"
+say "   superuser : cd $(pwd) && $COMPOSE exec pocketbase pb superuser upsert EMAIL PASSWORD"
+say ""
+say " Your database password is in .env - back that file up."
+say "----------------------------------------------------------------"

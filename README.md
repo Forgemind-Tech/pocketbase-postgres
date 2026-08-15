@@ -1,67 +1,64 @@
 # PocketBase on PostgreSQL
 
-**PostgreSQL instead of SQLite, in the same single-binary PocketBase you already
-know.** No SQLite code path is left and there is no build tag to switch back —
-this is a one-way port, not a dual-database abstraction.
+**PocketBase, with SQLite replaced by PostgreSQL.** One binary, realtime
+subscriptions, file storage, auth and an admin dashboard — backed by a real
+database server instead of a local file.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh
-sh install.sh
+curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh && sh install.sh
 ```
 
-Everything PocketBase offers is unchanged: realtime subscriptions, files and
-users management, the admin dashboard, and the REST-ish API.
+---
 
-## About this repository
+## About this fork
 
-This is an **independent fork** of [PocketBase](https://github.com/pocketbase/pocketbase)
-by [Gani Georgiev](https://github.com/ganigeorgiev), maintained by
-[@mwakalinga](https://github.com/mwakalinga). It is **not affiliated with, nor
-endorsed by, the upstream project**.
+[PocketBase](https://pocketbase.io) is created and maintained by
+**[Gani Georgiev](https://github.com/ganigeorgiev)** at
+[pocketbase/pocketbase](https://github.com/pocketbase/pocketbase). All the credit
+for PocketBase itself belongs there.
 
-- **Bugs and questions about this fork** → open an issue **here**. Please do not
-  send them upstream; the maintainers there cannot act on code that only exists
-  in this repository.
-- **Bugs in PocketBase itself** (unrelated to PostgreSQL) → reproduce on
-  [upstream](https://github.com/pocketbase/pocketbase) first and report there.
-- **General usage docs** → upstream's documentation still applies:
-  https://pocketbase.io/docs
+**This repository is an independent fork, maintained by
+[@mwakalinga](https://github.com/mwakalinga), and is not affiliated with or
+endorsed by the upstream project.**
 
-Licensed under the [MIT License](LICENSE.md), the same as upstream, which
-retains copyright for the original work.
+- **Report problems you find here** — [issues on this
+  repository](https://github.com/mwakalinga/pocketbase-postgres/issues), not
+  upstream. The upstream maintainer cannot act on code that only exists in this
+  fork.
+- Genuine upstream PocketBase bugs, reproducible against
+  `pocketbase/pocketbase`, belong upstream.
+- Licensed [MIT](LICENSE.md), like upstream, which retains copyright for the
+  original work.
 
-Currently based on upstream **v0.39.10**. What was taken from each upstream
-release, and everything this fork changes, is recorded in
-[CHANGELOG_FORK.md](CHANGELOG_FORK.md); `CHANGELOG.md` is kept byte-identical to
-upstream so their changes never conflict there.
+Upstream's documentation at **https://pocketbase.io/docs** still applies to
+collections, rules, the APIs and the SDKs. Only the storage layer changed.
 
 ## What this fork changes
 
-**PostgreSQL replaces SQLite.** Records live in the `public` schema, logs in
-`pb_aux`. Retries are keyed on SQLSTATE, schema introspection runs against the
-Postgres catalogs, and view collections are validated at startup instead of
-failing later at runtime.
+The port is one-way: there is no SQLite code path left and no build tag to switch
+back.
 
-**Connection configuration and a `db` command.** The connection resolves from
-`--dbUrl`, then `PB_DB_URL`, then `db.json`, then built-in defaults.
-`db show` / `db set` / `db test` work even when the database is unreachable —
-which is exactly when you need them.
+| | |
+| --- | --- |
+| **PostgreSQL storage** | `pgx/v5`. Records in the `public` schema, logs in `pb_aux`. Retries keyed on SQLSTATE, introspection against the Postgres catalogs. |
+| **Docker deployment** | An installer and a compose bundle that ship the app and PostgreSQL together. |
+| **Connection config** | `--dbUrl`, `PB_DB_URL`, or a `db` command that works even when the database is unreachable. |
+| **Backups** | `pg_dump`/`psql` instead of copying a file. They do not have to be installed on the host. Backups no longer block writes. |
+| **Concurrent writes** | Upstream capped the write pool at a single connection to avoid `SQLITE_BUSY`. Lifting that took 100 concurrent writes from 2.28s to 142ms. |
+| **Views validated at startup** | Broken view SQL fails loudly on boot rather than at runtime. |
 
-**Backups use `pg_dump`/`psql`**, and do not block writes. `pg_dump` reads a
-consistent snapshot, and file deletions are postponed for the duration so the
-archive cannot reference a file it no longer contains. The tools do not have to
-be installed on the host.
+Deliberate API differences — `strftime`, `@rowid`, `LIKE`, `COLLATE NOCASE`,
+JSON extraction — are listed under [Behaviour
+differences](#behaviour-differences) and explained in full in
+[POSTGRES.md](POSTGRES.md).
 
-**Concurrent writes.** Upstream caps the write pool at a single connection to
-avoid `SQLITE_BUSY`. That cap is meaningless on Postgres and only serialised
-every write in the application; removing it took a benchmark of 100 concurrent
-writes from 2.28s to 142ms.
+Fork-specific history, and a record of what was taken from each upstream
+release, is in [CHANGELOG_FORK.md](CHANGELOG_FORK.md). `CHANGELOG.md` is kept
+byte-identical to upstream so that pulling their changes never conflicts there.
 
-**A Docker deployment bundle** — the app and PostgreSQL together, published as a
-container image, with the installer above.
-
-Deliberate, user-visible API breaks are listed under
-[Behaviour differences](#behaviour-differences).
+> [!WARNING]
+> PocketBase is under active development and full backward compatibility is not
+> guaranteed before v1.0.0. This fork adds its own deliberate API breaks on top.
 
 ## Requirements
 
@@ -76,29 +73,49 @@ compose file pins 18).
 
 You do not need this repository, Go, or a database — only Docker.
 
+**Linux / macOS**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh
 ```
-
 ```bash
 sh install.sh
 ```
 
-It asks for the install directory, port, database name and user, generates a
-strong database password, writes `compose.yaml` and `.env`, starts everything,
-waits until the server answers, and offers to create your first superuser. Then
-open the dashboard it prints, typically **http://localhost:8090/_/**.
+**Windows (PowerShell)**
+
+The installer is a POSIX shell script, so it runs through Git Bash. PowerShell's
+`curl` is an alias for `Invoke-WebRequest` and does not accept `-fsSL`, and
+PowerShell 5.1 has no `&&`, so run these as separate lines:
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh" -OutFile install.sh
+```
+```powershell
+& "C:\Program Files\Git\bin\bash.exe" install.sh
+```
+
+**Windows (Git Bash or WSL)** — use the Linux/macOS commands above.
+
+---
+
+The installer asks for the install directory, port, database name and user, and
+timezone; generates a strong database password; writes `compose.yaml` and
+`.env`; starts everything; waits until the server answers; and offers to create
+your first superuser. Then open the dashboard it prints, typically
+**http://localhost:8090/_/**.
+
+It validates what you type and asks again rather than failing halfway through.
 
 It is a download rather than a pipe into a shell on purpose: read it first.
 
 For an unattended install:
 
 ```bash
-sh install.sh --yes --port 8090 --dir ./pocketbase --admin-email you@example.com --admin-pass yourpassword
+sh install.sh --yes --port 8090 --dir ./pocketbase --tz Africa/Dar_es_Salaam   --admin-email you@example.com --admin-pass yourpassword
 ```
 
-`sh install.sh --help` lists every option (port, database user and name,
-password, image tag, install directory).
+`sh install.sh --help` lists every option.
 
 <details>
 <summary>Prefer to write the files yourself?</summary>
@@ -147,11 +164,6 @@ curl http://localhost:8090/api/health
   needed for a full restore — copying `pbdata` alone is not a backup.
 - The app runs as a non-root user, and carries `pg_dump`/`psql` matching the
   server version so backups work from inside the container.
-
-Saving the file as `compose.yaml` is why the commands above have no
-`-f` flag. If you cloned the repository instead, the file is
-`docker-compose.prod.yml` and every command needs
-`-f docker-compose.prod.yml`.
 
 ### Putting it on the internet
 
@@ -229,27 +241,42 @@ in [POSTGRES.md](POSTGRES.md#configuring-the-connection).
 
 ## Updating
 
-**Take a backup first.** An update can carry migrations, which run automatically
-on the next start.
+**Take a backup first.** An update can carry database migrations, which apply
+automatically on the next start.
 
-**Docker:** update by image tag, not with the `update` command — `ghupdate`
-would rewrite the binary *inside* the running container, which works until the
-container is recreated and then silently reverts.
+If you installed with `install.sh`, update from the install directory:
 
 ```bash
-docker compose -f docker-compose.prod.yml pull && docker compose -f docker-compose.prod.yml up -d
+sh install.sh --update
 ```
 
-**Binary:** self-update from this fork's GitHub releases.
+That pulls the newest image for the tag you configured, recreates the
+containers, and waits until the server is healthy again. Your data is in named
+volumes, so it survives.
+
+To move to a specific release:
 
 ```bash
-./pocketbase update
+sh install.sh --update --tag v0.39.10-pg.2
 ```
+
+If you wrote the compose file yourself:
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+> Do not use `pocketbase update` inside Docker. It rewrites the binary in the
+> container's filesystem, which works until the container is recreated and then
+> silently reverts to the image's version.
+
+**Running the binary directly?** Then `./pocketbase update` is the right command
+— it self-updates from this fork's GitHub releases.
 
 > The plugin defaults to `pocketbase/pocketbase`. This fork points it at its own
 > repository — otherwise `update` would fetch the upstream **SQLite** build and
-> overwrite the binary in place, and the next start would find no SQLite data
-> and look like total data loss.
+> overwrite the binary, and the next start would find no SQLite data and look
+> like total data loss.
 
 ## Behaviour differences
 
