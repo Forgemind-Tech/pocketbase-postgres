@@ -1,19 +1,32 @@
 # Runtime-only image used by goreleaser, which supplies an already-compiled
 # binary in the build context rather than building from source.
 #
-# The runtime stage is intentionally identical to the one in ./Dockerfile - keep
-# them in sync. They are separate files because ./Dockerfile builds from source
-# (useful locally), while this one must not, or every release would compile the
-# binary twice.
-#
-# Based on the Postgres image to obtain pg_dump/psql at exactly the server's
-# major version; the backup feature shells out to them and pg_dump refuses to
-# dump a server newer than itself. See ./Dockerfile for why a plain Alpine base
-# does not work.
-FROM postgres:18-alpine
+# Keep this runtime stage in sync with the one in ./Dockerfile.
 
-RUN addgroup -S pb && adduser -S -G pb pb \
-    && mkdir -p /pb_data && chown pb:pb /pb_data
+# ---- runtime --------------------------------------------------------------
+#
+# A minimal Alpine image with only the Postgres *client* tools copied in, at
+# exactly the server's major version - the backup feature shells out to
+# pg_dump/psql, and pg_dump refuses to dump a server newer than itself.
+#
+# Basing directly on postgres:18-alpine would guarantee that parity too, but it
+# drags in the Postgres server, a compiler and gosu (a Go binary whose older
+# stdlib carries critical CVEs) for a 476MB image. Copying the two binaries and
+# libpq gives the same parity in ~30MB, with none of that attack surface.
+# Deleting those files afterwards would not have helped: a file removed in a
+# later layer still exists in the image.
+FROM alpine:3.24
+
+RUN apk add --no-cache         krb5-libs openldap libsasl libedit zstd-libs lz4-libs         openssl zlib ncurses-libs         ca-certificates         tzdata
+
+# client tools and libpq, taken from the matching Postgres image
+COPY --from=postgres:18-alpine /usr/local/bin/pg_dump /usr/local/bin/pg_dump
+COPY --from=postgres:18-alpine /usr/local/bin/psql    /usr/local/bin/psql
+COPY --from=postgres:18-alpine /usr/local/lib/libpq.so.5 /usr/local/lib/libpq.so.5
+
+# the app never runs as root; the data dir is created owned by it so that a
+# fresh named volume inherits the right ownership
+RUN addgroup -S pb && adduser -S -G pb pb     && mkdir -p /pb_data && chown pb:pb /pb_data
 
 # supplied by goreleaser in the build context
 COPY pocketbase /usr/local/bin/pocketbase

@@ -4,7 +4,7 @@
 # Writes a compose file and a .env, starts the stack, and creates the first
 # superuser. Downloads nothing else.
 #
-#   curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh
+#   curl -fsSL https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/install.sh -o install.sh
 #   sh install.sh
 #
 # Read it before running it - that is why it is a download rather than a pipe
@@ -33,7 +33,7 @@
 #   --yes             accept defaults, never prompt
 set -eu
 
-REPO_IMAGE="${PB_IMAGE_REPO:-ghcr.io/mwakalinga/pocketbase-postgres}"
+REPO_IMAGE="${PB_IMAGE_REPO:-ghcr.io/forgemind-tech/pocketbase-postgres}"
 MIN_PASSWORD_LEN=8
 
 INSTALL_DIR="./pocketbase"
@@ -334,6 +334,18 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       POSTGRES_DB: ${POSTGRES_DB:?}
       TZ: ${TZ:-UTC}
+    # hardening: Postgres needs CHOWN/SETUID/SETGID/DAC_OVERRIDE/FOWNER to
+    # initialise its data directory and drop to the postgres user
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     volumes:
       # postgres:18+ expects a single mount here and puts the cluster in a
       # major-version subdirectory beneath it
@@ -358,6 +370,12 @@ services:
       TZ: ${TZ:-UTC}
       # optional; when set it must be exactly 32 characters
       PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
+    # hardening: the app needs no extra privileges and no capabilities.
+    # It writes only to /pb_data, which is a volume.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "${PB_PORT}:8090"
     volumes:

@@ -45,7 +45,7 @@ builds:
 # Container images published to the GitHub Container Registry.
 #
 # One image per architecture, then a manifest that joins them so that
-# "docker pull ghcr.io/mwakalinga/pocketbase-postgres:<tag>" resolves to the
+# "docker pull ghcr.io/forgemind-tech/pocketbase-postgres:<tag>" resolves to the
 # right one. goreleaser skips pushing for --snapshot builds.
 dockers:
   - id: image_amd64
@@ -58,8 +58,8 @@ dockers:
     extra_files:
       - docker/entrypoint.sh
     image_templates:
-      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-amd64"
-      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-amd64"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:{{ .Version }}-amd64"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:latest-amd64"
     build_flag_templates:
       - "--platform=linux/amd64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
@@ -78,8 +78,8 @@ dockers:
     extra_files:
       - docker/entrypoint.sh
     image_templates:
-      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-arm64"
-      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-arm64"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:{{ .Version }}-arm64"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:latest-arm64"
     build_flag_templates:
       - "--platform=linux/arm64"
       - "--label=org.opencontainers.image.title={{ .ProjectName }}"
@@ -89,14 +89,14 @@ dockers:
       - "--label=org.opencontainers.image.licenses=MIT"
 
 docker_manifests:
-  - name_template: "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}"
+  - name_template: "ghcr.io/forgemind-tech/pocketbase-postgres:{{ .Version }}"
     image_templates:
-      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-amd64"
-      - "ghcr.io/mwakalinga/pocketbase-postgres:{{ .Version }}-arm64"
-  - name_template: "ghcr.io/mwakalinga/pocketbase-postgres:latest"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:{{ .Version }}-amd64"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/forgemind-tech/pocketbase-postgres:latest"
     image_templates:
-      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-amd64"
-      - "ghcr.io/mwakalinga/pocketbase-postgres:latest-arm64"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:latest-amd64"
+      - "ghcr.io/forgemind-tech/pocketbase-postgres:latest-arm64"
 
 release:
   draft: true

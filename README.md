@@ -5,7 +5,7 @@ subscriptions, file storage, auth and an admin dashboard — backed by a real
 database server instead of a local file.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh && sh install.sh
+curl -fsSL https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/install.sh -o install.sh && sh install.sh
 ```
 
 ---
@@ -18,11 +18,11 @@ curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/mast
 for PocketBase itself belongs there.
 
 **This repository is an independent fork, maintained by
-[@mwakalinga](https://github.com/mwakalinga), and is not affiliated with or
-endorsed by the upstream project.**
+[Forgemind Tech](https://github.com/Forgemind-Tech), and is not affiliated with
+or endorsed by the upstream project.**
 
 - **Report problems you find here** — [issues on this
-  repository](https://github.com/mwakalinga/pocketbase-postgres/issues), not
+  repository](https://github.com/Forgemind-Tech/pocketbase-postgres/issues), not
   upstream. The upstream maintainer cannot act on code that only exists in this
   fork.
 - Genuine upstream PocketBase bugs, reproducible against
@@ -76,7 +76,7 @@ You do not need this repository, Go, or a database — only Docker.
 **Linux / macOS**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/install.sh -o install.sh
 ```
 ```bash
 sh install.sh
@@ -89,7 +89,7 @@ The installer is a POSIX shell script, so it runs through Git Bash. PowerShell's
 PowerShell 5.1 has no `&&`, so run these as separate lines:
 
 ```powershell
-Invoke-WebRequest -Uri "https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/install.sh" -OutFile install.sh
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/install.sh" -OutFile install.sh
 ```
 ```powershell
 & "C:\Program Files\Git\bin\bash.exe" install.sh
@@ -121,11 +121,11 @@ sh install.sh --yes --port 8090 --dir ./pocketbase --tz Africa/Dar_es_Salaam   -
 <summary>Prefer to write the files yourself?</summary>
 
 ```bash
-curl -o compose.yaml https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/docker-compose.prod.yml
+curl -o compose.yaml https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/docker-compose.prod.yml
 ```
 
 ```bash
-curl -o .env https://raw.githubusercontent.com/mwakalinga/pocketbase-postgres/master/.env.example
+curl -o .env https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/.env.example
 ```
 
 Set `POSTGRES_PASSWORD` in `.env` — the app refuses to start while it is the
@@ -338,7 +338,7 @@ SQLite.
     ```
 
     ```bash
-    go mod edit -replace github.com/pocketbase/pocketbase=github.com/mwakalinga/pocketbase-postgres@latest
+    go mod edit -replace github.com/pocketbase/pocketbase=github.com/Forgemind-Tech/pocketbase-postgres@latest
     ```
 
     ```bash

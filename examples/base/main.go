@@ -107,7 +107,7 @@ func main() {
 	// upstream SQLite build and overwrite this binary in place - the next start
 	// would then find no SQLite data and look like total data loss.
 	ghupdate.MustRegister(app, app.RootCmd, ghupdate.Config{
-		Owner: "mwakalinga",
+		Owner: "Forgemind-Tech",
 		Repo:  "pocketbase-postgres",
 	})
 

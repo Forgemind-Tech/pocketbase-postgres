@@ -19,6 +19,18 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-pocketbase}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-pocketbase}
+    # hardening: Postgres needs CHOWN/SETUID/SETGID/DAC_OVERRIDE/FOWNER to
+    # initialise its data directory and drop to the postgres user
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
     volumes:
       # note: postgres:18+ expects a single mount at /var/lib/postgresql and
       # places the cluster in a major-version subdirectory beneath it
@@ -40,9 +52,9 @@ services:
     # deployment needs only this file and .env - no source checkout
     #
     # to run a locally built image instead:
-    #   docker build -t ghcr.io/mwakalinga/pocketbase-postgres:local .
+    #   docker build -t ghcr.io/forgemind-tech/pocketbase-postgres:local .
     #   PB_IMAGE_TAG=local docker compose -f docker-compose.prod.yml up -d
-    image: ghcr.io/mwakalinga/pocketbase-postgres:${PB_IMAGE_TAG:-latest}
+    image: ghcr.io/forgemind-tech/pocketbase-postgres:${PB_IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -57,6 +69,12 @@ services:
       PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
     # the image already defaults to "serve --http=0.0.0.0:8090" through an
     # entrypoint that adds --dir and, when a key is set, --encryptionEnv
+    # hardening: the app needs no extra privileges and no capabilities.
+    # It writes only to /pb_data, which is a volume.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "${PB_PORT:-8090}:8090"
     volumes:
