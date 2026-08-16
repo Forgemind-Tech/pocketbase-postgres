@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
+# Base images are pinned by digest so a rebuild cannot silently pick up a
+# changed base. Refresh them deliberately with:
+#   docker buildx imagetools inspect <image> --format '{{.Manifest.Digest}}'
 
 # ---- build ----------------------------------------------------------------
-FROM golang:1.25-alpine AS build
+FROM golang:1.25-alpine@sha256:3eb6c2b3db8d55e38537302edb510b4417f8a115efbd5906d131ceba9468e29a AS build
 
 WORKDIR /src
 
@@ -32,14 +35,14 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # libpq gives the same parity in ~30MB, with none of that attack surface.
 # Deleting those files afterwards would not have helped: a file removed in a
 # later layer still exists in the image.
-FROM alpine:3.24
+FROM alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
 
 RUN apk add --no-cache         krb5-libs openldap libsasl libedit zstd-libs lz4-libs         openssl zlib ncurses-libs         ca-certificates         tzdata
 
 # client tools and libpq, taken from the matching Postgres image
-COPY --from=postgres:18-alpine /usr/local/bin/pg_dump /usr/local/bin/pg_dump
-COPY --from=postgres:18-alpine /usr/local/bin/psql    /usr/local/bin/psql
-COPY --from=postgres:18-alpine /usr/local/lib/libpq.so.5 /usr/local/lib/libpq.so.5
+COPY --from=postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2 /usr/local/bin/pg_dump /usr/local/bin/pg_dump
+COPY --from=postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2 /usr/local/bin/psql    /usr/local/bin/psql
+COPY --from=postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2 /usr/local/lib/libpq.so.5 /usr/local/lib/libpq.so.5
 
 # the app never runs as root; the data dir is created owned by it so that a
 # fresh named volume inherits the right ownership

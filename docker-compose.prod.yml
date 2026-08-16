@@ -13,12 +13,21 @@ name: pocketbase
 
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-pocketbase}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-pocketbase}
+    # Caps, not reservations: they stop a runaway container taking the host
+    # down, they do not reserve anything. Set them too low and the kernel will
+    # OOM-kill the database, so tune in .env rather than trimming blindly.
+    deploy:
+      resources:
+        limits:
+          cpus: "${PG_CPU_LIMIT:-1.0}"
+          memory: ${PG_MEM_LIMIT:-1g}
+          pids: 512
     # hardening: Postgres needs CHOWN/SETUID/SETGID/DAC_OVERRIDE/FOWNER to
     # initialise its data directory and drop to the postgres user
     security_opt:
@@ -69,6 +78,12 @@ services:
       PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
     # the image already defaults to "serve --http=0.0.0.0:8090" through an
     # entrypoint that adds --dir and, when a key is set, --encryptionEnv
+    deploy:
+      resources:
+        limits:
+          cpus: "${PB_CPU_LIMIT:-1.0}"
+          memory: ${PB_MEM_LIMIT:-512m}
+          pids: 256
     # hardening: the app needs no extra privileges and no capabilities.
     # It writes only to /pb_data, which is a volume.
     security_opt:

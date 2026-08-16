@@ -19,6 +19,12 @@
 #   sh install.sh --update              # newest image for the configured tag
 #   sh install.sh --update --tag v1.2.3 # switch to a specific release
 #
+# Changing resource limits later (from the install directory):
+#
+#   sh install.sh --resources                    # pick a size interactively
+#   sh install.sh --resources --profile large    # or set one directly
+#   sh install.sh --resources --pg-mem 4g --pg-cpu 2
+#
 # Options:
 #   --dir PATH        where to install            (default ./pocketbase)
 #   --port N          host port for the dashboard (default 8090)
@@ -29,6 +35,13 @@
 #   --tz ZONE         timezone, eg. Africa/Dar_es_Salaam (default: detected)
 #   --admin-email X   first superuser email
 #   --admin-pass X    first superuser password    (at least 8 characters)
+#   --profile NAME    resource sizing: small|medium|large|xlarge|none
+#                     (default: chosen from the host's memory)
+#   --pb-mem SIZE     app memory cap,      eg. 512m, 2g, 0 for unlimited
+#   --pb-cpu N        app cpu cap,         eg. 0.5, 2, 0 for unlimited
+#   --pg-mem SIZE     database memory cap
+#   --pg-cpu N        database cpu cap
+#   --resources       change limits on an existing install, then restart it
 #   --update          update an existing install instead of creating one
 #   --yes             accept defaults, never prompt
 set -eu
@@ -49,6 +62,12 @@ DO_UPDATE="0"
 TZ_NAME=""
 TAG_GIVEN="0"
 TZ_UNVERIFIED=0
+DO_RESOURCES="0"
+PROFILE=""
+PB_MEM=""
+PB_CPU=""
+PG_MEM=""
+PG_CPU=""
 
 die() { printf 'error: %s\n' "$1" >&2; exit 1; }
 say() { printf '%s\n' "$1"; }
@@ -64,9 +83,15 @@ while [ $# -gt 0 ]; do
         --tz) TZ_NAME="${2:-}"; shift 2 ;;
         --admin-email) ADMIN_EMAIL="${2:-}"; shift 2 ;;
         --admin-pass) ADMIN_PASS="${2:-}"; shift 2 ;;
+        --profile) PROFILE="${2:-}"; shift 2 ;;
+        --pb-mem) PB_MEM="${2:-}"; shift 2 ;;
+        --pb-cpu) PB_CPU="${2:-}"; shift 2 ;;
+        --pg-mem) PG_MEM="${2:-}"; shift 2 ;;
+        --pg-cpu) PG_CPU="${2:-}"; shift 2 ;;
+        --resources) DO_RESOURCES="1"; shift ;;
         --update) DO_UPDATE="1"; shift ;;
         --yes|-y) ASSUME_YES="1"; shift ;;
-        -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,50p' "$0"; exit 0 ;;
         *) die "unknown option: $1 (try --help)" ;;
     esac
 done
@@ -203,6 +228,162 @@ wait_for_health() { # wait_for_health PORT
     return 1
 }
 
+
+# ------------------------------------------------------- resource sizing ----
+# Limits are caps, not reservations. The right numbers depend entirely on the
+# host and the workload, so rather than hardcoding one answer we size from what
+# Docker reports and let the user pick or override.
+valid_mem() {
+    _v="$1"
+    [ -n "$_v" ] || return 1
+    case "$_v" in *[bBkKmMgG]) _v="${_v%?}" ;; esac
+    case "$_v" in ''|*[!0-9]*) return 1 ;; esac
+    return 0
+}
+
+valid_cpu() {
+    case "$1" in
+        ''|*[!0-9.]*) return 1 ;;
+        *.*.*) return 1 ;;
+        .*|*.) return 1 ;;
+    esac
+    return 0
+}
+
+host_mem_bytes() { docker info --format '{{.MemTotal}}' 2>/dev/null || echo 0; }
+host_cpus()      { docker info --format '{{.NCPU}}' 2>/dev/null || echo 0; }
+
+# profile_values NAME -> "PB_MEM PB_CPU PG_MEM PG_CPU"
+profile_values() {
+    case "$1" in
+        small)  echo "256m 0.5 512m 0.5" ;;
+        medium) echo "512m 1.0 1g 1.0" ;;
+        large)  echo "1g 2.0 2g 2.0" ;;
+        xlarge) echo "2g 4.0 4g 4.0" ;;
+        none)   echo "0 0 0 0" ;;
+        *)      return 1 ;;
+    esac
+}
+
+# pick a profile that fits the host rather than assuming a server size
+suggest_profile() {
+    _mb=$(( $(host_mem_bytes) / 1048576 ))
+    if   [ "$_mb" -le 0 ];    then echo medium
+    elif [ "$_mb" -lt 2048 ]; then echo small
+    elif [ "$_mb" -lt 4096 ]; then echo medium
+    elif [ "$_mb" -lt 8192 ]; then echo large
+    else                           echo xlarge
+    fi
+}
+
+apply_profile() { # apply_profile NAME - fills any value not set explicitly
+    set -- $(profile_values "$1")
+    [ -n "$PB_MEM" ] || PB_MEM="$1"
+    [ -n "$PB_CPU" ] || PB_CPU="$2"
+    [ -n "$PG_MEM" ] || PG_MEM="$3"
+    [ -n "$PG_CPU" ] || PG_CPU="$4"
+}
+
+choose_resources() {
+    _suggested="$(suggest_profile)"
+    _mb=$(( $(host_mem_bytes) / 1048576 ))
+    _cpus="$(host_cpus)"
+
+    if [ -n "$PROFILE" ]; then
+        profile_values "$PROFILE" >/dev/null || die "unknown profile '$PROFILE' (small|medium|large|xlarge|none)"
+        apply_profile "$PROFILE"
+    elif interactive; then
+        say ""
+        say "This host offers ${_mb}MB of memory and ${_cpus} CPUs to Docker."
+        say ""
+        say "Resource limits are caps, not reservations - they stop a runaway"
+        say "container taking the host down. Too low and the kernel kills the"
+        say "process, so pick for the workload you expect."
+        say ""
+        say "  small   app 256m / db 512m    a small site or a 1GB VPS"
+        say "  medium  app 512m / db 1g      a typical app"
+        say "  large   app 1g   / db 2g      a busy app"
+        say "  xlarge  app 2g   / db 4g      a heavily used deployment"
+        say "  none    no limits             let it use whatever it needs"
+        say "  custom  enter exact values"
+        say ""
+        while :; do
+            ask _prof "Size" "$_suggested"
+            case "$_prof" in
+                small|medium|large|xlarge|none) apply_profile "$_prof"; break ;;
+                custom)
+                    ask_valid PB_MEM "  app memory cap (0 = unlimited)" "512m" valid_mem "use a size like 512m, 2g or 0"
+                    ask_valid PB_CPU "  app cpu cap (0 = unlimited)" "1.0" valid_cpu "use a number like 0.5, 2 or 0"
+                    ask_valid PG_MEM "  database memory cap" "1g" valid_mem "use a size like 512m, 2g or 0"
+                    ask_valid PG_CPU "  database cpu cap" "1.0" valid_cpu "use a number like 0.5, 2 or 0"
+                    break ;;
+                *) printf '  choose small, medium, large, xlarge, none or custom
+' > /dev/tty ;;
+            esac
+        done
+    else
+        apply_profile "$_suggested"
+    fi
+
+    valid_mem "$PB_MEM" || die "invalid app memory cap '$PB_MEM'"
+    valid_cpu "$PB_CPU" || die "invalid app cpu cap '$PB_CPU'"
+    valid_mem "$PG_MEM" || die "invalid database memory cap '$PG_MEM'"
+    valid_cpu "$PG_CPU" || die "invalid database cpu cap '$PG_CPU'"
+}
+
+# update a key in .env, appending it when an older install lacks it
+set_env_var() {
+    if grep -q "^$1=" .env 2>/dev/null; then
+        _t=".env.tmp.$$"
+        sed "s|^$1=.*|$1=$2|" .env > "$_t" && mv "$_t" .env
+    else
+        printf '%s=%s
+' "$1" "$2" >> .env
+    fi
+}
+
+# ------------------------------------------------------------- resources ----
+if [ "$DO_RESOURCES" = "1" ]; then
+    if [ -f compose.yaml ]; then
+        :
+    elif [ -f "$INSTALL_DIR/compose.yaml" ]; then
+        cd "$INSTALL_DIR"
+    else
+        die "no compose.yaml here or in $INSTALL_DIR - run this from your install directory, or pass --dir"
+    fi
+    [ -f .env ] || die "no .env next to compose.yaml"
+
+    say "current limits in $(pwd):"
+    for _k in PB_MEM_LIMIT PB_CPU_LIMIT PG_MEM_LIMIT PG_CPU_LIMIT; do
+        _cur="$(sed -n "s/^$_k=//p" .env | sed -n '1p')"
+        printf '  %-14s %s
+' "$_k" "${_cur:-(unset - using the compose default)}"
+    done
+
+    choose_resources
+
+    set_env_var PB_MEM_LIMIT "$PB_MEM"
+    set_env_var PB_CPU_LIMIT "$PB_CPU"
+    set_env_var PG_MEM_LIMIT "$PG_MEM"
+    set_env_var PG_CPU_LIMIT "$PG_CPU"
+
+    say ""
+    say "new limits: app ${PB_MEM}/${PB_CPU}cpu, database ${PG_MEM}/${PG_CPU}cpu"
+    say "restarting so they take effect..."
+    $COMPOSE up -d
+
+    _port="$(sed -n 's/^PB_PORT=//p' .env | sed -n '1p')"
+    [ -n "$_port" ] || _port="8090"
+    if wait_for_health "$_port"; then
+        say "done."
+    else
+        say "the server did not come back healthy - the limits may be too low."
+        say "check: $COMPOSE logs"
+        exit 1
+    fi
+    exit 0
+fi
+
 # ---------------------------------------------------------------- update ----
 if [ "$DO_UPDATE" = "1" ]; then
     if [ -f compose.yaml ]; then
@@ -294,6 +475,8 @@ if [ -n "$ADMIN_PASS" ]; then
     valid_password "$ADMIN_PASS" || die "superuser password must be at least $MIN_PASSWORD_LEN characters"
 fi
 
+choose_resources
+
 [ -n "$DB_PASS" ] || DB_PASS="$(generate_secret)"
 [ -n "$DB_PASS" ] || die "could not generate a database password - pass --db-pass"
 
@@ -327,13 +510,22 @@ cat > compose.yaml <<'COMPOSE_EOF'
 
 services:
   postgres:
-    image: postgres:18
+    image: postgres:18@sha256:06cad38a5d9f5d24b4d83d86def30795d5e4b757fedbf5281172b576dedcd941
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:?}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       POSTGRES_DB: ${POSTGRES_DB:?}
       TZ: ${TZ:-UTC}
+    # Caps, not reservations: they stop a runaway container taking the host
+    # down, they do not reserve anything. Set them too low and the kernel will
+    # OOM-kill the database, so tune in .env rather than trimming blindly.
+    deploy:
+      resources:
+        limits:
+          cpus: "${PG_CPU_LIMIT:-1.0}"
+          memory: ${PG_MEM_LIMIT:-1g}
+          pids: 512
     # hardening: Postgres needs CHOWN/SETUID/SETGID/DAC_OVERRIDE/FOWNER to
     # initialise its data directory and drop to the postgres user
     security_opt:
@@ -370,6 +562,12 @@ services:
       TZ: ${TZ:-UTC}
       # optional; when set it must be exactly 32 characters
       PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
+    deploy:
+      resources:
+        limits:
+          cpus: "${PB_CPU_LIMIT:-1.0}"
+          memory: ${PB_MEM_LIMIT:-512m}
+          pids: 256
     # hardening: the app needs no extra privileges and no capabilities.
     # It writes only to /pb_data, which is a volume.
     security_opt:
@@ -408,6 +606,14 @@ TZ=$TZ_NAME
 # losing it makes those settings unreadable. Generate one with:
 #   openssl rand -base64 24 | cut -c1-32
 PB_ENCRYPTION_KEY=
+
+# Resource caps, not reservations. Too low and the kernel OOM-kills the
+# process; raise them on a busy instance. 0 means unlimited.
+# Change them later with:  sh install.sh --resources
+PB_CPU_LIMIT=$PB_CPU
+PB_MEM_LIMIT=$PB_MEM
+PG_CPU_LIMIT=$PG_CPU
+PG_MEM_LIMIT=$PG_MEM
 ENV_EOF
 umask 022
 
@@ -463,10 +669,12 @@ say ""
 say "   dashboard : http://localhost:$PB_PORT/_/"
 say "   directory : $(pwd)"
 say "   timezone  : $TZ_NAME"
+say "   limits    : app ${PB_MEM}/${PB_CPU}cpu, database ${PG_MEM}/${PG_CPU}cpu"
 say ""
 say "   logs      : cd $(pwd) && $COMPOSE logs -f"
 say "   stop      : cd $(pwd) && $COMPOSE down"
 say "   update    : cd $(pwd) && sh install.sh --update"
+say "   resources : cd $(pwd) && sh install.sh --resources"
 say "   superuser : cd $(pwd) && $COMPOSE exec pocketbase pb superuser upsert EMAIL PASSWORD"
 say ""
 say " Your database password is in .env - back that file up."
