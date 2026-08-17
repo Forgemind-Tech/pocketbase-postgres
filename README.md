@@ -8,6 +8,14 @@ database server instead of a local file.
 curl -fsSL https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/install.sh -o install.sh && sh install.sh
 ```
 
+**Current release: `v0.39.11-pg.2`** — PocketBase v0.39.11 on PostgreSQL.
+[Release notes](https://github.com/Forgemind-Tech/pocketbase-postgres/releases/tag/v0.39.11-pg.2)
+· [All releases](https://github.com/Forgemind-Tech/pocketbase-postgres/releases)
+· [`ghcr.io/forgemind-tech/pocketbase-postgres`](https://github.com/orgs/Forgemind-Tech/packages/container/package/pocketbase-postgres)
+
+Versions read `<upstream version>-pg.<fork release>`: `v0.39.11-pg.2` is the
+second release of this fork against upstream PocketBase v0.39.11.
+
 ---
 
 ## About this fork
@@ -337,7 +345,7 @@ and the command prints how to delete it once you are satisfied.
 To move to a specific release:
 
 ```bash
-sh install.sh --update --tag v0.39.10-pg.2
+sh install.sh --update --tag v0.39.11-pg.2
 ```
 
 If you wrote the compose file yourself:
