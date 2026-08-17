@@ -27,9 +27,19 @@ COPY --from=postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c
 COPY --from=postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2 /usr/local/bin/psql    /usr/local/bin/psql
 COPY --from=postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2 /usr/local/lib/libpq.so.5 /usr/local/lib/libpq.so.5
 
-# the app never runs as root; the data dir is created owned by it so that a
-# fresh named volume inherits the right ownership
-RUN addgroup -S pb && adduser -S -G pb pb     && mkdir -p /pb_data && chown pb:pb /pb_data
+# The app never runs as root. All four directories are created up front and
+# owned by it so that a fresh named volume inherits the right ownership.
+#
+# They are separate top-level directories, not children of /pb_data, so a
+# deployment can bind-mount each one independently - see docker/entrypoint.sh
+# for why the defaults are unusable in a container:
+#   /pb_data        written by the app: uploads, backups, types.d.ts
+#   /pb_hooks       JS hooks, written by the user
+#   /pb_migrations  written by both (automigrate generates files here)
+#   /pb_public      static files, written by the user
+RUN addgroup -S pb && adduser -S -G pb pb \
+    && mkdir -p /pb_data /pb_hooks /pb_migrations /pb_public \
+    && chown pb:pb /pb_data /pb_hooks /pb_migrations /pb_public
 
 # supplied by goreleaser in the build context
 COPY pocketbase /usr/local/bin/pocketbase

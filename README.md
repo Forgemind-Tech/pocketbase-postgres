@@ -159,11 +159,78 @@ curl http://localhost:8090/api/health
 
 - **Two containers**: the app, and PostgreSQL. Postgres is *not* published to the
   host — only the app reaches it, over a private network.
-- **Two volumes**: `pgdata` holds the database (your records, collections and
-  settings) and `pbdata` holds uploaded files and generated backups. **Both** are
-  needed for a full restore — copying `pbdata` alone is not a backup.
+- **Four directories** next to `compose.yaml`, described below, plus one named
+  volume `pgdata` holding the database itself. A full restore needs **both**
+  `pgdata` and `pb_data` — copying `pb_data` alone is not a backup.
 - The app runs as a non-root user, and carries `pg_dump`/`psql` matching the
   server version so backups work from inside the container.
+
+### Editing files directly
+
+The install directory has the same layout as a downloaded PocketBase binary, so
+you can work in your own editor instead of the dashboard:
+
+```
+pocketbase/
+├── compose.yaml
+├── .env                 settings and your database password
+├── pb_hooks/            *.pb.js files that extend the server
+├── pb_public/           static files served at /
+├── pb_migrations/       schema migrations, including generated ones
+└── pb_data/             uploads, backups, and types.d.ts
+```
+
+A minimal hook — save it as `pb_hooks/main.pb.js`:
+
+```javascript
+routerAdd("GET", "/hello", (e) => {
+    return e.json(200, { message: "hello from a hook" })
+})
+```
+
+Then restart the app so it loads:
+
+```bash
+docker compose restart pocketbase
+```
+
+The restart is required. PocketBase can watch `pb_hooks` and reload by itself,
+but the file-change events do not cross the Docker Desktop file share on macOS
+and Windows, so do not rely on it.
+
+`pb_data/types.d.ts` is generated on every start and gives you autocomplete for
+the hook API in editors that read it.
+
+> [!NOTE]
+> Anything in `pb_hooks` runs as code inside the server process. Keep that
+> directory as private as the rest of the install — write access to it is
+> effectively access to the server.
+
+### File ownership
+
+`PB_UID` and `PB_GID` in `.env` are the user the app runs as, and they must match
+who owns the four directories, or the server cannot write to them. `install.sh`
+sets them to your own user.
+
+This only really bites on Linux. Docker Desktop on macOS and Windows presents
+these directories as owned by whoever asks, so a wrong value works there and
+then fails on a server. If you moved the install, or created the directories by
+hand, fix it with:
+
+```bash
+sudo chown -R "$(id -u):$(id -g)" pb_data pb_hooks pb_migrations pb_public
+```
+
+```bash
+id -u
+```
+
+```bash
+id -g
+```
+
+Put those two numbers in `.env` as `PB_UID` and `PB_GID`, then
+`docker compose up -d`.
 
 ### Putting it on the internet
 
@@ -192,6 +259,14 @@ as intended. Set a real password in `.env`.
 
 **`permission denied` talking to Docker** — your user is not in the `docker`
 group. Use `sudo`, or add yourself and log out and back in.
+
+**`permission denied` in the app's own logs, or backups failing to write** — the
+app's `PB_UID`/`PB_GID` do not own the `pb_*` directories. See
+[File ownership](#file-ownership).
+
+**A hook in `pb_hooks` does nothing** — restart the app; the watcher does not see
+changes through the Docker Desktop file share. Hook files must end in `.pb.js`,
+and syntax errors are reported in `docker compose logs pocketbase`.
 
 **Nothing on 8090** — check both containers are up and read the logs:
 
@@ -251,8 +326,13 @@ sh install.sh --update
 ```
 
 That pulls the newest image for the tag you configured, recreates the
-containers, and waits until the server is healthy again. Your data is in named
-volumes, so it survives.
+containers, and waits until the server is healthy again. Your data lives outside
+the containers, so it survives.
+
+If your install predates the switch to editable directories, `--update` notices
+that `pb_data` is still a Docker named volume and offers to move it into a plain
+directory first. It copies rather than moves — the old volume is left in place,
+and the command prints how to delete it once you are satisfied.
 
 To move to a specific release:
 

@@ -19,8 +19,12 @@ CHANGELOG_16_22.html
 CHANGELOG_8_15.html
 LICENSE.html
 
-# local runtime data dir
+# local runtime dirs. docker-compose.prod.yml bind-mounts these from wherever
+# it is run, so they appear here when the production stack is started in-tree.
 /pb_data/
+/pb_hooks/
+/pb_migrations/
+/pb_public/
 
 # local deployment secrets
 /.env

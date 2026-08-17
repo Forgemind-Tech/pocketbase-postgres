@@ -77,7 +77,17 @@ services:
       # stored SMTP/S3 credentials; losing it makes those unreadable.
       PB_ENCRYPTION_KEY: ${PB_ENCRYPTION_KEY:-}
     # the image already defaults to "serve --http=0.0.0.0:8090" through an
-    # entrypoint that adds --dir and, when a key is set, --encryptionEnv
+    # entrypoint that adds the four --*Dir flags and, when a key is set,
+    # --encryptionEnv
+    #
+    # Runs as the host user that owns the bind-mounted directories below.
+    # Without this the container's own "pb" user (101:102) cannot write to
+    # directories owned by you, and on Linux the server fails to start. Docker
+    # Desktop on macOS/Windows papers over ownership, which is exactly why this
+    # must be set explicitly rather than discovered by testing there.
+    #
+    # Find yours with:  id -u  and  id -g
+    user: "${PB_UID:-101}:${PB_GID:-102}"
     deploy:
       resources:
         limits:
@@ -85,7 +95,12 @@ services:
           memory: ${PB_MEM_LIMIT:-512m}
           pids: 256
     # hardening: the app needs no extra privileges and no capabilities.
-    # It writes only to /pb_data, which is a volume.
+    # It writes only to the four directories below.
+    #
+    # Note that pb_hooks is executable JS loaded into the server process, so
+    # whoever can write to that directory on the host can run code inside this
+    # container. That is how PocketBase works and the container limits still
+    # apply, but it is worth knowing before making the directory group-writable.
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -93,10 +108,17 @@ services:
     ports:
       - "${PB_PORT:-8090}:8090"
     volumes:
-      # uploaded files and generated backups; the records themselves live in
-      # Postgres, so this volume alone is NOT a complete backup
-      - pbdata:/pb_data
+      # Bind mounts rather than named volumes, so the layout matches a plain
+      # binary install and you can edit hooks, migrations and static files with
+      # your own editor. Create them before the first start, or Docker creates
+      # them root-owned and the container cannot write to them.
+      #
+      # pb_data holds uploads, backups and types.d.ts. Your records live in
+      # Postgres, so this directory alone is NOT a complete backup.
+      - ./pb_data:/pb_data
+      - ./pb_hooks:/pb_hooks
+      - ./pb_migrations:/pb_migrations
+      - ./pb_public:/pb_public
 
 volumes:
   pgdata:
-  pbdata:

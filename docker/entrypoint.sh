@@ -28,11 +28,21 @@ case "${PB_DB_URL:-}" in
         ;;
 esac
 
+# Every directory PocketBase reads or writes is named explicitly, and each one
+# is a separate mount point so a deployment can bind-mount it from the host.
+#
+# The defaults would not do: pb_hooks and pb_migrations are resolved relative to
+# the data dir ("pb_data/../pb_hooks"), and pb_public relative to the
+# *executable* - which here would be /usr/local/bin/pb_public. All three would
+# land on the image's ephemeral layer, so hooks could not be added from the host
+# and anything written there would be lost on the next update.
+PB_DIRS='--dir=/pb_data --hooksDir=/pb_hooks --migrationsDir=/pb_migrations --publicDir=/pb_public'
+
 # An encryption key is optional - upstream PocketBase does not encrypt settings
 # by default either. Only pass the flag when a key is actually present,
 # otherwise PocketBase would look for a key that is not there.
 if [ -n "${PB_ENCRYPTION_KEY:-}" ]; then
-    exec /usr/local/bin/pocketbase "$@" --dir=/pb_data --encryptionEnv=PB_ENCRYPTION_KEY
+    exec /usr/local/bin/pocketbase "$@" $PB_DIRS --encryptionEnv=PB_ENCRYPTION_KEY
 fi
 
-exec /usr/local/bin/pocketbase "$@" --dir=/pb_data
+exec /usr/local/bin/pocketbase "$@" $PB_DIRS

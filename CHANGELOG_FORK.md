@@ -102,6 +102,47 @@ then built-in defaults matching the bundled compose file. `db show` / `db set` /
 `db test` manage the stored settings and work even when the database is
 unreachable, since that is when they are needed.
 
+### Container directory layout
+
+The bundle mounts `pb_data`, `pb_hooks`, `pb_migrations` and `pb_public` as plain
+directories next to `compose.yaml`, and runs the app as the host user that owns
+them (`PB_UID`/`PB_GID` in `.env`).
+
+Before this, only `pb_data` was mounted, as a named volume, and the other three
+did not exist in the image at all. Their defaults are resolved relative to the
+data dir (`pb_data/../pb_hooks`) or, for `pb_public`, to the *executable* — which
+in the image meant `/usr/local/bin/pb_public`. All three landed on the container's
+ephemeral layer, so **the JS hook system was silently unusable**: a missing hooks
+directory is not an error (`filesContent` returns an empty map on
+`fs.ErrNotExist`), so the plugin loaded, found nothing, and logged nothing.
+Anything written there was lost on the next update.
+
+`docker/entrypoint.sh` now names all four directories explicitly rather than
+relying on that path arithmetic.
+
+Running as the host user is what makes bind mounts workable on Linux, where a
+directory owned by uid 1000 is not writable by the image's `pb` user (101).
+`install.sh` derives the ids from the host: the invoking user normally; the
+image's own user when installing as root, so the app never runs as root inside
+the container; and the same fallback when `id` gives nothing usable, as in Git
+Bash on Windows, where the reported uid is derived from a Windows SID. Docker
+Desktop on macOS and Windows presents bind mounts as owned by whoever asks, which
+is precisely why this is decided from the host rather than by trying it — a wrong
+value works there and fails on a server.
+
+`install.sh --update` detects an install still using the named volume and offers
+to copy it into `./pb_data` (via `docker cp`, so it works on Windows and the
+files land owned by the invoking user). The volume is left in place afterwards.
+
+The database keeps its named volume. Postgres owns that directory's layout and
+permissions, there is nothing in it to edit by hand, and bind-mounting it only
+invites permission trouble.
+
+One consequence worth knowing: `pb_hooks` is executable code loaded into the
+server process, so write access to that directory is equivalent to code execution
+inside the container. The container limits still apply, but the hardening no
+longer rests on the app's code being fixed at image build time.
+
 ### The port itself
 
 Replaced SQLite with PostgreSQL (`pgx/v5`). Data lives in the `public` schema
