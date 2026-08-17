@@ -8,13 +8,15 @@ database server instead of a local file.
 curl -fsSL https://raw.githubusercontent.com/Forgemind-Tech/pocketbase-postgres/master/install.sh -o install.sh && sh install.sh
 ```
 
-**Current release: `v0.39.11-pg.2`** — PocketBase v0.39.11 on PostgreSQL.
-[Release notes](https://github.com/Forgemind-Tech/pocketbase-postgres/releases/tag/v0.39.11-pg.2)
-· [All releases](https://github.com/Forgemind-Tech/pocketbase-postgres/releases)
-· [`ghcr.io/forgemind-tech/pocketbase-postgres`](https://github.com/orgs/Forgemind-Tech/packages/container/package/pocketbase-postgres)
+[![Latest release](https://img.shields.io/github/v/release/Forgemind-Tech/pocketbase-postgres?label=release)](https://github.com/Forgemind-Tech/pocketbase-postgres/releases/latest)
+[![Container image](https://img.shields.io/badge/ghcr.io-pocketbase--postgres-2496ED?logo=docker&logoColor=white)](https://github.com/orgs/Forgemind-Tech/packages/container/package/pocketbase-postgres)
+[![PostgreSQL 18](https://img.shields.io/badge/PostgreSQL-18-336791?logo=postgresql&logoColor=white)](POSTGRES.md)
+[![MIT license](https://img.shields.io/github/license/Forgemind-Tech/pocketbase-postgres)](LICENSE.md)
 
-Versions read `<upstream version>-pg.<fork release>`: `v0.39.11-pg.2` is the
-second release of this fork against upstream PocketBase v0.39.11.
+Releases are versioned `<upstream version>-pg.<fork release>`, so `v0.39.11-pg.2`
+is the second release of this fork against upstream PocketBase v0.39.11. See the
+[latest release](https://github.com/Forgemind-Tech/pocketbase-postgres/releases/latest)
+for what changed.
 
 ---
 
