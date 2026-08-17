@@ -12,6 +12,38 @@ See [POSTGRES.md](POSTGRES.md) for how the port actually works.
 
 ## Upstream merges
 
+### v0.39.11 — partially merged
+
+Upstream changed **no Go source at all** in this release; it is entirely UI,
+dependency bumps and changelog.
+
+**Taken**
+
+- `ui/**`: "API preview" example fixes, sortable `dragend` handling, ESC to
+  escape the TAB trap on rule fields, duplicated collections can edit the
+  target of their relation fields, shablon update. `ui/dist` matches upstream
+  v0.39.11 exactly.
+- `go.mod` / `go.sum`: `golang.org/x/crypto` v0.55.0, `x/net` v0.58.0,
+  `x/mod` v0.40.0, `x/tools` v0.49.0. The `golang.org/x/*` block now matches
+  upstream v0.39.11 exactly — `x/image` v0.45.0 and `x/text` v0.41.0 were
+  already here, bumped ahead of upstream to clear a container-scan CVE.
+- `.github/workflows/release.yaml`: min Go for `actions/setup-go`
+  1.26.5 → 1.26.6, for the Go 1.26.6 security fixes.
+
+**Deliberately not taken**
+
+- `modernc_versions_check.go`: deleted by the port.
+- `CHANGELOG_16_22.md`: not present in this fork.
+
+**Note on the merge itself**
+
+`git merge v0.39.11` is not usable here. v0.39.10 was applied as a
+cherry-picked diff rather than a merge commit, so `git merge-base` resolves
+back past it and git re-proposes the whole v0.39.9..v0.39.11 span — 23
+conflicts, most of them rename/rename on `ui/dist` bundles whose content
+hashes changed on both sides. Apply the `v0.39.10..v0.39.11` diff per path
+instead, as below.
+
 ### v0.39.10 — partially merged
 
 Cherry-picked rather than merged wholesale.
